@@ -1,0 +1,42 @@
+from PyQt6.QtWidgets import QListView, QAbstractItemView
+from PyQt6.QtCore import Qt, QItemSelectionModel
+
+class ToggleSelectionListView(QListView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self.setDragEnabled(False) # アイテム自体のドラッグを無効化
+        # SelectItems ensures that selection is based on items, not rows or columns.
+        # This is usually the default for IconMode but explicitly setting it can be clearer.
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.pos())
+            if index.isValid(): # アイテム上でのクリック
+                selection_model = self.selectionModel()
+                # QItemSelectionModel.Toggle フラグは、指定されたインデックスの選択状態を反転させる
+                # 他のインデックスの選択状態には影響を与えない
+                selection_model.select(index, QItemSelectionModel.SelectionFlag.Toggle)
+                event.accept() 
+                return
+            else: # アイテム外（何もないところ）でのクリック
+                # 何もしないことで、現在の選択状態を維持する
+                event.accept() 
+                return
+        
+        # 左クリック以外（例：右クリックでのコンテキストメニューなど）はデフォルトの動作に任せる
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        # 左ボタンが押された状態でのマウス移動（ドラッグ）の場合、
+        # デフォルトのラバーバンド選択などを抑制するためにイベントを消費して何もしない。
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            # ビューポート内でドラッグが開始された場合のみを対象とするか、
+            # より単純に左ボタン押下中の移動はすべて無視するか。
+            # ここでは、左ボタン押下中の移動は選択に影響させないようにする。
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    # selectionChangedシグナルは通常通りMainWindowで処理できる

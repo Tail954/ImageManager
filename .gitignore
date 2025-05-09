@@ -1,0 +1,25 @@
+# Python
+*.py[cod]
+*$py.class
+__pycache__/
+.env
+*.egg-info/
+dist/
+build/
+*.so
+*.dll
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
