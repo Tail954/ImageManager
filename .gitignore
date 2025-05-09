@@ -23,3 +23,6 @@ ENV/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Test data
+/tests/test_data/images/

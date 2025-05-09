@@ -79,19 +79,61 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         # Each field must satisfy its own keyword search (AND/OR based on self._search_mode)
         # The results of these per-field checks are then ANDed together.
 
-        # Positive Prompt Filter
-        positive_match = self._keywords_match(metadata.get('positive_prompt', ''), positive_keywords)
-        if not positive_match:
-            return False
+        # --- Apply filters for each field ---
+        # The _keywords_match helper itself respects the AND/OR mode for keywords *within* a single field.
+        # Now we need to combine the results from different fields based on the overall search mode.
 
-        # Negative Prompt Filter
-        negative_match = self._keywords_match(metadata.get('negative_prompt', ''), negative_keywords)
-        if not negative_match:
-            return False
+        positive_match_field = self._keywords_match(metadata.get('positive_prompt', ''), positive_keywords)
+        negative_match_field = self._keywords_match(metadata.get('negative_prompt', ''), negative_keywords)
+        generation_match_field = self._keywords_match(metadata.get('generation_info', ''), generation_keywords)
 
-        # Generation Info Filter
-        generation_match = self._keywords_match(metadata.get('generation_info', ''), generation_keywords)
-        if not generation_match:
-            return False
+        if self._search_mode == "AND":
+            # For AND mode, all active filters must be true.
+            # If a filter text is empty, its corresponding _match_field will be True from _keywords_match,
+            # so it doesn't prevent a match if other fields match.
+            return positive_match_field and negative_match_field and generation_match_field
         
-        return True # Row is accepted if all field filters pass
+        elif self._search_mode == "OR":
+            # For OR mode, at least one active filter must be true.
+            # A field is considered "active" for OR if its filter text is not empty.
+            # If all filter texts are empty, then all items should pass (handled by _keywords_match returning True).
+            
+            # If all filter texts are empty, all _match_field will be True, so it returns True.
+            if not positive_keywords and not negative_keywords and not generation_keywords:
+                return True
+
+            # At least one filter text is active. Accept if any active field matches.
+            accepted_by_or = False
+            if positive_keywords and positive_match_field:
+                accepted_by_or = True
+            if negative_keywords and negative_match_field:
+                accepted_by_or = True
+            if generation_keywords and generation_match_field:
+                accepted_by_or = True
+            
+            # If no filter texts were active (e.g. all were empty strings but not None),
+            # the above logic might not set accepted_by_or.
+            # However, the _keywords_match for empty filter_keywords returns True.
+            # The logic needs to be: if any field has keywords AND matches, it's an OR pass.
+            # If a field has NO keywords, it does not contribute to an OR pass, nor does it block it.
+            
+            # Refined OR logic:
+            # If any field has keywords and its specific match is true, then the row is accepted.
+            # If all fields that *have* keywords do *not* match, then the row is rejected.
+            # If no fields have keywords, the row is accepted (as per _keywords_match behavior).
+
+            # Let's list the results of active filters
+            active_filter_results = []
+            if positive_keywords:
+                active_filter_results.append(positive_match_field)
+            if negative_keywords:
+                active_filter_results.append(negative_match_field)
+            if generation_keywords:
+                active_filter_results.append(generation_match_field)
+            
+            if not active_filter_results: # No active filters (all filter texts were empty)
+                return True # All items pass
+            
+            return any(active_filter_results) # If any active filter matched, pass
+
+        return False # Should not be reached if mode is AND/OR

@@ -1,0 +1,27 @@
+# Test Image Metadata Mapping
+# This file describes the intended metadata for test images located in tests/test_data/images/
+# Format: file_name: positive_prompt="...", negative_prompt="...", generation_info_notes="..."
+
+# PNG Files
+01.png: positive_prompt="test positive 1", negative_prompt="test negative 1", generation_info_notes="Standard WebUI output"
+02.png: positive_prompt="masterpiece,best quality,amazing quality,1girl,\n\n!, (standing:1.1), skirt, black footwear, black pantyhose, purple eyes, long hair, see-through, full body, toes, school uniform, halo, feet up, collared shirt, mechanical halo, ribbon, pantyhose pull, very long hair, black skirt, thighband pantyhose, feet, shirt, white shirt, blue necktie, parted bangs, purple hair, legs together, pleated skirt, sidelocks, open mouth, straight hair, off shoulder, pantyhose, clothes pull, necktie, hair between eyes, solo, looking at viewer, blush, long sleeves, blunt ends, no shoes, soles, foot focuhold, foot focu, leg up, standing on one leg, miniskirt, purple ribbon, arm at side, sweatdrop,amazing quality, ^^^,!,@,$,\n\n\n(standing:1.1),[black tops: see-through clothes:0.5]", negative_prompt="short neg", generation_info_notes="Standard WebUI output"
+03.png: positive_prompt="日本語のプロンプト試験", negative_prompt="日本語のネガティブ試験", generation_info_notes="Standard WebUI output"
+04.png: positive_prompt="only positive here", negative_prompt="", generation_info_notes="Standard WebUI output"
+05.png: positive_prompt="", negative_prompt="only negative here", generation_info_notes="Standard WebUI output"
+06.png: positive_prompt="", negative_prompt="", generation_info_notes="Standard WebUI output"
+
+# JPEG Files
+07.jpg: positive_prompt="test positive 1", negative_prompt="test negative 1", generation_info_notes="Standard WebUI output"
+08.jpg: positive_prompt="masterpiece,best quality,amazing quality,1girl,\n\n!, (standing:1.1), skirt, black footwear, black pantyhose, purple eyes, long hair, see-through, full body, toes, school uniform, halo, feet up, collared shirt, mechanical halo, ribbon, pantyhose pull, very long hair, black skirt, thighband pantyhose, feet, shirt, white shirt, blue necktie, parted bangs, purple hair, legs together, pleated skirt, sidelocks, open mouth, straight hair, off shoulder, pantyhose, clothes pull, necktie, hair between eyes, solo, looking at viewer, blush, long sleeves, blunt ends, no shoes, soles, foot focuhold, foot focu, leg up, standing on one leg, miniskirt, purple ribbon, arm at side, sweatdrop,amazing quality, ^^^,!,@,$,\n\n\n(standing:1.1),[black tops: see-through clothes:0.5]", negative_prompt="short neg", generation_info_notes="Standard WebUI output"
+09.jpg: positive_prompt="日本語のプロンプト試験", negative_prompt="日本語のネガティブ試験", generation_info_notes="Standard WebUI output"
+10.jpg: positive_prompt="only positive here", negative_prompt="", generation_info_notes="Standard WebUI output"
+11.jpg: positive_prompt="", negative_prompt="only negative here", generation_info_notes="Standard WebUI output"
+12.jpg: positive_prompt="", negative_prompt="", generation_info_notes="Standard WebUI output"
+
+# WebP Files
+13.webp: positive_prompt="test positive 1", negative_prompt="test negative 1", generation_info_notes="Standard WebUI output"
+14.webp: positive_prompt="masterpiece,best quality,amazing quality,1girl,\n\n!, (standing:1.1), skirt, black footwear, black pantyhose, purple eyes, long hair, see-through, full body, toes, school uniform, halo, feet up, collared shirt, mechanical halo, ribbon, pantyhose pull, very long hair, black skirt, thighband pantyhose, feet, shirt, white shirt, blue necktie, parted bangs, purple hair, legs together, pleated skirt, sidelocks, open mouth, straight hair, off shoulder, pantyhose, clothes pull, necktie, hair between eyes, solo, looking at viewer, blush, long sleeves, blunt ends, no shoes, soles, foot focuhold, foot focu, leg up, standing on one leg, miniskirt, purple ribbon, arm at side, sweatdrop,amazing quality, ^^^,!,@,$,\n\n\n(standing:1.1),[black tops: see-through clothes:0.5]", negative_prompt="short neg", generation_info_notes="Standard WebUI output"
+15.webp: positive_prompt="日本語のプロンプト試験", negative_prompt="日本語のネガティブ試験", generation_info_notes="Standard WebUI output"
+16.webp: positive_prompt="only positive here", negative_prompt="", generation_info_notes="Standard WebUI output"
+17.webp: positive_prompt="", negative_prompt="only negative here", generation_info_notes="Standard WebUI output"
+18.webp: positive_prompt="", negative_prompt="", generation_info_notes="Standard WebUI output"
