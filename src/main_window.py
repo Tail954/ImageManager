@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, # Added QListView
+    QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, QDialog, # Added QListView and QDialog
     QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog # Added QProgressDialog
 )
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
         self.file_operations = FileOperations(self) # Initialize FileOperations
         self.progress_dialog = None # For cancellation dialog
         self.initial_dialog_path = None # For storing path from settings
+        self.metadata_dialog_last_geometry = None # To store the last geometry of the metadata dialog
         # self._load_settings() # Load settings on startup - MOVED TO END OF __init__
 
         # Status bar
@@ -632,28 +633,41 @@ class MainWindow(QMainWindow):
 
         # If the instance is None (no dialog open, or previous was closed and reference cleared)
         if self.metadata_dialog_instance is None:
-            self.metadata_dialog_instance = ImageMetadataDialog(metadata_dict, self, item_file_path_for_debug) # Pass file path for logging
+            self.metadata_dialog_instance = ImageMetadataDialog(metadata_dict, self, item_file_path_for_debug)
             self.metadata_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-            # Connect the finished signal to a slot that clears the instance variable
             self.metadata_dialog_instance.finished.connect(self._on_metadata_dialog_finished)
+            
+            if self.metadata_dialog_last_geometry:
+                # Ensure the geometry is valid and on a visible screen
+                # For simplicity, we'll just restore it. Advanced checks can be added later.
+                # A basic check: ensure it's not off-screen in a very obvious way (e.g. negative coords far off)
+                # More robust check would involve QScreen.availableGeometry()
+                screen_rect = QApplication.primaryScreen().availableGeometry()
+                if screen_rect.intersects(self.metadata_dialog_last_geometry):
+                    self.metadata_dialog_instance.setGeometry(self.metadata_dialog_last_geometry)
+                else:
+                    logger.warning("Last metadata dialog geometry is off-screen, centering instead.")
+                    # Center on parent logic could be added here if needed
+            
             self.metadata_dialog_instance.show()
         else:
             # If instance is not None, it means it's already open. Update its content.
-            # Avoid calling show() again if already visible, as it might reset position.
-            self.metadata_dialog_instance.update_metadata(metadata_dict, item_file_path_for_debug) # Pass file path for logging
+            self.metadata_dialog_instance.update_metadata(metadata_dict, item_file_path_for_debug)
             if not self.metadata_dialog_instance.isVisible():
-                self.metadata_dialog_instance.show() # Show it if it was somehow hidden but not None
+                self.metadata_dialog_instance.show() 
         
         self.metadata_dialog_instance.raise_()
         self.metadata_dialog_instance.activateWindow()
 
-    def _on_metadata_dialog_finished(self):
+    def _on_metadata_dialog_finished(self, result): # result is QDialog.DialogCode (accepted/rejected)
         # Slot to be called when the metadata dialog is closed.
-        # Check if the sender is our dialog instance before nullifying.
-        # This check is important if multiple dialogs could potentially connect to this slot.
-        if self.sender() == self.metadata_dialog_instance:
+        sender_dialog = self.sender()
+        if sender_dialog == self.metadata_dialog_instance:
+            if isinstance(sender_dialog, QDialog): # Ensure it's a QDialog instance
+                 self.metadata_dialog_last_geometry = sender_dialog.geometry()
+                 logger.debug(f"Metadata dialog closed. Stored geometry: {self.metadata_dialog_last_geometry}")
             self.metadata_dialog_instance = None
-            # logger.debug("Metadata dialog closed, instance reference cleared.")
+            # logger.debug("Metadata dialog instance reference cleared.")
 
     # --- File Operation Handlers ---
     def _handle_copy_mode_toggled(self, checked):
