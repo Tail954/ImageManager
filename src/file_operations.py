@@ -89,7 +89,8 @@ class FileOperationsWorker(QObject):
             'renamed_files': renamed_files_info,
             'errors': errors,
             'status': 'completed',
-            'successfully_moved_src_paths': successfully_moved_src_paths
+            'successfully_moved_src_paths': successfully_moved_src_paths,
+            'destination_folder': self.destination_folder # Add destination_folder
         })
 
     def _copy_files(self):
@@ -168,7 +169,13 @@ class FileOperationsWorker(QObject):
             
             self.signals.progress.emit(i + 1, total_files)
             
-        self.signals.finished.emit({'operation_type': 'copy', 'copied_count': copied_count, 'errors': errors, 'status': 'completed'})
+        self.signals.finished.emit({
+            'operation_type': 'copy',
+            'copied_count': copied_count,
+            'errors': errors,
+            'status': 'completed',
+            'destination_folder': self.destination_folder # Add destination_folder
+        })
 
 
 class FileOperations(QObject):

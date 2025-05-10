@@ -26,3 +26,6 @@ Thumbs.db
 
 # Test data
 /tests/test_data/images/
+
+# Log files
+imagemanager.log

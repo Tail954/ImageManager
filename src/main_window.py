@@ -2,7 +2,7 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, # Added QListView
-    QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox # Added QMessageBox
+    QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog # Added QProgressDialog
 )
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction
 from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QDirIterator, QVariant, QSortFilterProxyModel
@@ -16,6 +16,7 @@ from .metadata_filter_proxy_model import MetadataFilterProxyModel
 from .image_metadata_dialog import ImageMetadataDialog
 from .thumbnail_list_view import ToggleSelectionListView # Import custom ListView
 from .file_operations import FileOperations # Import FileOperations
+from .renamed_files_dialog import RenamedFilesDialog # Import new dialog
 
 # PillowのImageオブジェクトをQImageに変換するために必要
 import logging # Add logging import
@@ -49,6 +50,7 @@ class MainWindow(QMainWindow):
         self.is_copy_mode = False # Flag for copy mode state, True if copy mode is active
         self.copy_selection_order = [] # Stores QStandardItem references in copy mode selection order
         self.file_operations = FileOperations(self) # Initialize FileOperations
+        self.progress_dialog = None # For cancellation dialog
 
         # Status bar
         self.statusBar = self.statusBar()
@@ -81,7 +83,7 @@ class MainWindow(QMainWindow):
         self.deselect_all_button = QPushButton("全選択解除")
         self.deselect_all_button.clicked.connect(self.deselect_all_thumbnails)
         selection_button_layout.addWidget(self.deselect_all_button)
-        left_layout.addLayout(selection_button_layout)
+        # left_layout.addLayout(selection_button_layout) # Removed from here
 
         self.recursive_toggle_button = QPushButton("サブフォルダ検索: ON")
         self.recursive_toggle_button.setCheckable(True)
@@ -160,20 +162,27 @@ class MainWindow(QMainWindow):
         file_op_layout = QVBoxLayout(file_op_group_box)
         file_op_layout.setContentsMargins(5,5,5,5)
         file_op_layout.addWidget(QLabel("ファイル操作:"))
+        
+        file_op_layout.addLayout(selection_button_layout) # Added here
+
+        self.move_files_button = QPushButton("ファイルを移動")
+        self.move_files_button.clicked.connect(self._handle_move_files_button_clicked)
+        file_op_layout.addWidget(self.move_files_button)
 
         self.copy_mode_button = QPushButton("Copy Mode")
         self.copy_mode_button.setCheckable(True)
         self.copy_mode_button.toggled.connect(self._handle_copy_mode_toggled)
         file_op_layout.addWidget(self.copy_mode_button)
 
-        self.move_files_button = QPushButton("ファイルを移動")
-        self.move_files_button.clicked.connect(self._handle_move_files_button_clicked)
-        file_op_layout.addWidget(self.move_files_button)
-
         self.copy_files_button = QPushButton("ファイルをコピー")
         self.copy_files_button.clicked.connect(self._handle_copy_files_button_clicked)
         self.copy_files_button.setEnabled(False) # Initially disabled
         file_op_layout.addWidget(self.copy_files_button)
+
+        # self.cancel_op_button = QPushButton("キャンセル") # Removed, will use QProgressDialog
+        # self.cancel_op_button.clicked.connect(self._handle_cancel_op_button_clicked)
+        # self.cancel_op_button.setEnabled(False) # Initially disabled
+        # file_op_layout.addWidget(self.cancel_op_button)
 
         left_layout.addWidget(file_op_group_box)
         # --- End File Operations UI ---
@@ -684,8 +693,19 @@ class MainWindow(QMainWindow):
             logger.info(f"移動先フォルダが選択されました: {destination_folder}")
             logger.info(f"移動対象ファイル: {self.selected_file_paths}")
             if self.file_operations.start_operation("move", self.selected_file_paths, destination_folder):
-                self.statusBar.showMessage(f"移動処理を開始しました... ({len(self.selected_file_paths)}個のファイル)", 0) # Persistent until finished
-                self._set_file_op_buttons_enabled(False)
+                self._set_file_op_buttons_enabled(False) # Disable buttons first
+                # Show progress dialog
+                total_files_to_move = len(self.selected_file_paths)
+                self.progress_dialog = QProgressDialog(
+                    f"ファイルを移動中... (0/{total_files_to_move})", 
+                    "キャンセル", 0, total_files_to_move, self
+                )
+                self.progress_dialog.setWindowTitle("ファイル移動")
+                self.progress_dialog.setMinimumDuration(0) # Show immediately
+                self.progress_dialog.canceled.connect(self.file_operations.stop_operation)
+                self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+                self.progress_dialog.setValue(0)
+                # self.statusBar.showMessage(f"移動処理を開始しました... ({len(self.selected_file_paths)}個のファイル)", 0) # Progress dialog will show info
             else:
                 self.statusBar.showMessage("別のファイル操作が実行中です。", 3000)
         else:
@@ -702,8 +722,19 @@ class MainWindow(QMainWindow):
         if destination_folder:
             # Pass the QStandardItem list directly for copy_selection_order
             if self.file_operations.start_operation("copy", None, destination_folder, copy_selection_order=self.copy_selection_order):
-                self.statusBar.showMessage(f"コピー処理を開始しました... ({len(self.copy_selection_order)}個のファイル)", 0) # Persistent
-                self._set_file_op_buttons_enabled(False)
+                self._set_file_op_buttons_enabled(False) # Disable buttons first
+                # Show progress dialog
+                total_files_to_copy = len(self.copy_selection_order)
+                self.progress_dialog = QProgressDialog(
+                    f"ファイルをコピー中... (0/{total_files_to_copy})", 
+                    "キャンセル", 0, total_files_to_copy, self
+                )
+                self.progress_dialog.setWindowTitle("ファイルコピー")
+                self.progress_dialog.setMinimumDuration(0) # Show immediately
+                self.progress_dialog.canceled.connect(self.file_operations.stop_operation)
+                self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+                self.progress_dialog.setValue(0)
+                # self.statusBar.showMessage(f"コピー処理を開始しました... ({len(self.copy_selection_order)}個のファイル)", 0) # Progress dialog will show info
             else:
                 self.statusBar.showMessage("別のファイル操作が実行中です。", 3000)
         else:
@@ -711,25 +742,54 @@ class MainWindow(QMainWindow):
 
     def _set_file_op_buttons_enabled(self, enabled):
         """Enable/disable file operation related buttons."""
+        # 'enabled' is True when operations are NOT running (i.e., buttons should be active)
+        # 'enabled' is False when an operation IS running (i.e., buttons should be inactive)
         self.move_files_button.setEnabled(enabled and not self.is_copy_mode)
         self.copy_files_button.setEnabled(enabled and self.is_copy_mode)
         self.copy_mode_button.setEnabled(enabled)
+        
+        # self.cancel_op_button.setEnabled(not enabled) # Removed, QProgressDialog handles cancel
+
         # Potentially disable other UI elements like folder tree, filters during operation
         self.folder_select_button.setEnabled(enabled)
         self.folder_tree_view.setEnabled(enabled)
         # Add other UI elements that should be disabled during file operations
 
+    def _handle_cancel_op_button_clicked(self):
+        logger.info("Cancel button clicked. Requesting to stop file operation.")
+        self.file_operations.stop_operation()
+        # The cancel button will be disabled by _handle_file_op_finished or _handle_file_op_error
+        # once the worker acknowledges the stop and finishes.
+        # We can also disable it immediately here for faster UI feedback,
+        # but it might be re-enabled briefly if the worker takes time to stop.
+        # For now, let the finish/error handlers manage its final state.
+
     def _handle_file_op_progress(self, processed_count, total_count):
-        self.statusBar.showMessage(f"処理中: {processed_count}/{total_count} ファイル...", 0)
+        # self.statusBar.showMessage(f"処理中: {processed_count}/{total_count} ファイル...", 0) # ProgressDialog shows this
+        if self.progress_dialog: # Check if the dialog still exists
+            self.progress_dialog.setMaximum(total_count) # Ensure total is up-to-date
+            self.progress_dialog.setValue(processed_count)
+            # QProgressDialog's label text can be set, or it might auto-update based on its properties.
+            # Explicitly setting it ensures our desired format.
+            self.progress_dialog.setLabelText(f"処理中: {processed_count}/{total_count} ファイル...")
+        else:
+            logger.debug(f"Progress update ({processed_count}/{total_count}) received but progress_dialog is None.")
+
 
     def _handle_file_op_error(self, error_message):
         logger.error(f"File operation error: {error_message}")
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
         QMessageBox.critical(self, "ファイル操作エラー", f"エラーが発生しました:\n{error_message}")
         self.statusBar.showMessage("ファイル操作中にエラーが発生しました。", 5000)
         self._set_file_op_buttons_enabled(True) # Re-enable buttons on error
 
     def _handle_file_op_finished(self, result):
         logger.info(f"File operation finished. Result: {result}")
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
         self._set_file_op_buttons_enabled(True)
 
         status = result.get('status', 'unknown')
@@ -786,17 +846,72 @@ class MainWindow(QMainWindow):
 
 
             if renamed_files:
-                renamed_messages = [f"「{info['original']}」->「{info['new']}」" for info in renamed_files]
-                QMessageBox.information(self, "ファイル名変更", "以下のファイルは名前が変更されました:\n" + "\n".join(renamed_messages))
+                # Use the new custom dialog
+                dialog = RenamedFilesDialog(renamed_files, self)
+                dialog.exec()
             
             if errors:
                 QMessageBox.warning(self, "移動エラー", "以下のエラーが発生しました:\n" + "\n".join(errors))
             
             if moved_count > 0:
                 # Check if destination is within the current view root
-                destination_path_obj = Path(self.file_operations._worker.destination_folder) # Access destination_folder from worker
-                current_root_path_obj = Path(self.current_folder_path)
-                
+                # Get destination_folder from the result dictionary
+                destination_folder_from_result = result.get('destination_folder')
+                if not destination_folder_from_result:
+                    logger.error("Destination folder not found in operation result for move.")
+                    # Fallback or decide how to handle this missing info
+                    # For now, we might not be able to perform the relative path check accurately
+                    # and will assume it's an external move for message purposes.
+                    self.statusBar.showMessage(f"{moved_count}個のファイルを移動しました。", 5000)
+                    # Skip the relative path logic if destination_folder is missing
+                else:
+                    destination_path_obj = Path(destination_folder_from_result)
+                    current_root_path_obj = Path(self.current_folder_path) if self.current_folder_path else None
+                    
+                    is_within_current_root = False
+                    if current_root_path_obj: # Only proceed if current_folder_path is set
+                        try:
+                            # Check if destination_folder is a sub-path of current_folder_path
+                            if destination_path_obj == current_root_path_obj or \
+                               destination_path_obj.resolve().is_relative_to(current_root_path_obj.resolve()):
+                                is_within_current_root = True
+                        except Exception as e: # Path.is_relative_to can raise ValueError on Windows for different drives
+                            logger.warning(f"Could not determine if destination is relative to current root: {e}")
+                            try:
+                                common = Path(os.path.commonpath([str(destination_path_obj.resolve()), str(current_root_path_obj.resolve())]))
+                                if common == current_root_path_obj.resolve():
+                                     is_within_current_root = True
+                            except ValueError:
+                                 pass
+
+                    if is_within_current_root and current_root_path_obj: # Ensure current_root_path_obj is not None
+                        relative_dest_path = os.path.relpath(str(destination_path_obj), str(current_root_path_obj))
+                        if relative_dest_path == ".": relative_dest_path = "現在のフォルダ"
+
+                        if moved_count == 1 and successfully_moved_src_paths:
+                            moved_filename = os.path.basename(successfully_moved_src_paths[0])
+                            msg = f"ファイル「{moved_filename}」は表示中フォルダ内で「{relative_dest_path}」へ移動されました。\n" \
+                                  f"ビューから非表示になります。移動先フォルダを選択するか、現在のフォルダを再選択すると確認できます。"
+                            QMessageBox.information(self, "ファイル移動完了", msg)
+                        else:
+                            msg = f"{moved_count}個のファイルは表示中フォルダ内で移動されました。\n" \
+                                  f"ビューから非表示になります。移動先フォルダを選択するか、現在のフォルダを再選択すると確認できます。"
+                            QMessageBox.information(self, "ファイル移動完了", msg)
+                        self.statusBar.showMessage(f"{moved_count}個のファイルを移動しました。", 5000)
+                    else:
+                        self.statusBar.showMessage(f"{moved_count}個のファイルを移動しました。", 5000)
+
+            elif not errors: # This was 'elif not errors:' which might be too broad if moved_count is 0 but no errors
+                 self.statusBar.showMessage("移動するファイルがありませんでした、または処理が完了しました。", 3000)
+            # Ensure status bar is updated even if moved_count is 0 and there are errors
+            elif errors and moved_count == 0:
+                 self.statusBar.showMessage("ファイルの移動に失敗しました。", 3000)
+
+
+        elif operation_type == "copy":
+            copied_count = result.get('copied_count', 0)
+            # destination_folder_from_result = result.get('destination_folder') # Also available for copy if needed
+            if errors:
                 is_within_current_root = False
                 try:
                     # Check if destination_folder is a sub-path of current_folder_path
