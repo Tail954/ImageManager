@@ -14,7 +14,7 @@ class ImageMetadataDialog(QDialog):
 
         self.metadata_dict = metadata_dict if isinstance(metadata_dict, dict) else {}
         
-        self.setMinimumSize(500, 400)
+        # self.setMinimumSize(500, 400) # Remove minimum size constraint to allow more flexible resizing
 
         main_layout = QVBoxLayout(self)
 

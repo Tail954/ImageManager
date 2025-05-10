@@ -1,7 +1,10 @@
 from PyQt6.QtWidgets import QListView, QAbstractItemView
-from PyQt6.QtCore import Qt, QItemSelectionModel
+from PyQt6.QtCore import Qt, QItemSelectionModel, pyqtSignal, QModelIndex
 
 class ToggleSelectionListView(QListView):
+    # Signal to request metadata display for a given index
+    metadata_requested = pyqtSignal(QModelIndex)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -22,10 +25,16 @@ class ToggleSelectionListView(QListView):
                 return
             else: # アイテム外（何もないところ）でのクリック
                 # 何もしないことで、現在の選択状態を維持する
-                event.accept() 
+                event.accept()
+                return
+        elif event.button() == Qt.MouseButton.RightButton:
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                self.metadata_requested.emit(index)
+                event.accept()
                 return
         
-        # 左クリック以外（例：右クリックでのコンテキストメニューなど）はデフォルトの動作に任せる
+        # Other mouse buttons are handled by the parent class
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):

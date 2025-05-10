@@ -4,10 +4,11 @@ from PyQt6.QtWidgets import (
     QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, # Added QListView
     QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog # Added QProgressDialog
 )
-from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction
+from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
 from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QDirIterator, QVariant, QSortFilterProxyModel
 import os # For path operations
 from pathlib import Path # For path operations
+import json # For settings
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
 
 from .thumbnail_loader import ThumbnailLoaderThread
@@ -30,6 +31,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+APP_SETTINGS_FILE = "app_settings.json"
+
 from .constants import METADATA_ROLE, SELECTION_ORDER_ROLE # Import from constants
 
 class MainWindow(QMainWindow):
@@ -51,6 +54,8 @@ class MainWindow(QMainWindow):
         self.copy_selection_order = [] # Stores QStandardItem references in copy mode selection order
         self.file_operations = FileOperations(self) # Initialize FileOperations
         self.progress_dialog = None # For cancellation dialog
+        self.initial_dialog_path = None # For storing path from settings
+        # self._load_settings() # Load settings on startup - MOVED TO END OF __init__
 
         # Status bar
         self.statusBar = self.statusBar()
@@ -211,8 +216,9 @@ class MainWindow(QMainWindow):
         self.thumbnail_view.setLayoutMode(QListView.LayoutMode.Batched) # Use QListView.LayoutMode
         self.thumbnail_view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel) # Enable pixel-based scrolling
         self.thumbnail_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection) # This should be fine as QAbstractItemView is imported
-        self.thumbnail_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.thumbnail_view.customContextMenuRequested.connect(self.show_thumbnail_context_menu)
+        # self.thumbnail_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu) # No longer needed
+        # self.thumbnail_view.customContextMenuRequested.connect(self.show_thumbnail_context_menu) # No longer needed
+        self.thumbnail_view.metadata_requested.connect(self.handle_metadata_requested) # Connect new signal
         
         self.thumbnail_delegate = ThumbnailDelegate(self.thumbnail_view) # Create delegate instance
         self.thumbnail_view.setItemDelegate(self.thumbnail_delegate) # Set delegate
@@ -240,8 +246,16 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 900])
         main_layout.addWidget(splitter)
 
+        self._load_settings() # Load settings after all UI elements are initialized
+
     def select_folder(self):
-        folder_path = QFileDialog.getExistingDirectory(self, "画像フォルダを選択", "")
+        start_dir = ""
+        if self.current_folder_path and os.path.isdir(self.current_folder_path):
+            start_dir = self.current_folder_path
+        elif self.initial_dialog_path and os.path.isdir(self.initial_dialog_path):
+            start_dir = self.initial_dialog_path
+        
+        folder_path = QFileDialog.getExistingDirectory(self, "画像フォルダを選択", start_dir)
         if folder_path:
             logger.info(f"選択されたフォルダ: {folder_path}")
             self.update_folder_tree(folder_path)
@@ -568,55 +582,42 @@ class MainWindow(QMainWindow):
         else:
             logger.debug("Filter proxy model not yet initialized for apply_filters call.")
 
-    def show_thumbnail_context_menu(self, position):
-        proxy_index = self.thumbnail_view.indexAt(position)
+    def handle_metadata_requested(self, proxy_index):
         if not proxy_index.isValid():
+            logger.debug("handle_metadata_requested: Received invalid proxy_index.")
             return
 
         source_index = self.filter_proxy_model.mapToSource(proxy_index)
         item = self.source_thumbnail_model.itemFromIndex(source_index)
         if not item:
+            logger.debug(f"handle_metadata_requested: Could not get item from source_index {source_index.row()},{source_index.column()}.")
             return
 
         file_path = item.data(Qt.ItemDataRole.UserRole)
+        if not file_path:
+            logger.warning(f"handle_metadata_requested: No file path associated with item at proxy_index {proxy_index.row()},{proxy_index.column()}.")
+            return
         
         data_from_item = item.data(METADATA_ROLE)
-        final_metadata_to_show = {} # Default to empty dict
+        final_metadata_to_show = {} 
 
         if isinstance(data_from_item, dict):
             final_metadata_to_show = data_from_item
-            logger.debug(f"DEBUG_CTX_MENU: Metadata from item role for {file_path} is a dict: {final_metadata_to_show}")
+            # logger.debug(f"Metadata for {file_path} from item role: {final_metadata_to_show}")
         else:
-            logger.debug(f"DEBUG_CTX_MENU: Metadata from item role for {file_path} is NOT a dict (Type: {type(data_from_item)}). Trying cache.")
+            # logger.debug(f"Metadata for {file_path} not in item role (Type: {type(data_from_item)}). Trying cache.")
             cached_metadata = self.metadata_cache.get(file_path)
             if isinstance(cached_metadata, dict):
                 final_metadata_to_show = cached_metadata
-                logger.debug(f"DEBUG_CTX_MENU: Metadata from cache for {file_path} is a dict: {final_metadata_to_show}")
+                # logger.debug(f"Metadata for {file_path} from cache: {final_metadata_to_show}")
             else:
-                logger.warning(f"DEBUG_CTX_MENU: Metadata for {file_path} not found or not a dict in cache either. Type: {type(cached_metadata)}. Using empty dict.")
+                logger.warning(f"Metadata for {file_path} not found or not a dict in cache either. Type: {type(cached_metadata)}. Using empty dict.")
         
-        # Ensure final_metadata_to_show is always a dict
         if not isinstance(final_metadata_to_show, dict):
-            logger.error(f"DEBUG_CTX_MENU: CRITICAL - final_metadata_to_show is NOT a dict for {file_path}! Type: {type(final_metadata_to_show)}. Forcing empty dict.")
+            logger.error(f"CRITICAL - final_metadata_to_show is NOT a dict for {file_path}! Type: {type(final_metadata_to_show)}. Forcing empty dict.")
             final_metadata_to_show = {}
-
-        # Log what is about to be passed to the dialog for the target file
-        # # normalized_image_path_log_ctx = file_path.replace("\\", "/")
-        # # target_file_for_debug_log_raw_ctx = r"G:\test\00005-4187066497.jpg"
-        # # normalized_target_path_log_ctx = target_file_for_debug_log_raw_ctx.replace("\\", "/")
-        # # if normalized_image_path_log_ctx == normalized_target_path_log_ctx:
-             # # logger.info(f"DEBUG_TARGET_CTX_MENU: About to connect lambda with metadata for {file_path}: {final_metadata_to_show}")
-        
-        menu = QMenu(self)
-        show_metadata_action = QAction("メタデータを表示", self)
-        # Use default argument in lambda to capture the current value of final_metadata_to_show
-        # Also pass file_path for logging within show_metadata_dialog_for_item
-        show_metadata_action.triggered.connect(
-            lambda checked=False, bound_metadata=final_metadata_to_show, fp=file_path: self.show_metadata_dialog_for_item(bound_metadata, fp)
-        )
-        menu.addAction(show_metadata_action)
-        
-        menu.exec(self.thumbnail_view.viewport().mapToGlobal(position))
+            
+        self.show_metadata_dialog_for_item(final_metadata_to_show, file_path)
 
     def show_metadata_dialog_for_item(self, metadata_dict, item_file_path_for_debug=None): # Added item_file_path_for_debug
         # # --- Added Debug Log ---
@@ -637,9 +638,11 @@ class MainWindow(QMainWindow):
             self.metadata_dialog_instance.finished.connect(self._on_metadata_dialog_finished)
             self.metadata_dialog_instance.show()
         else:
-            # If instance is not None, it means it's already open. Update and show.
+            # If instance is not None, it means it's already open. Update its content.
+            # Avoid calling show() again if already visible, as it might reset position.
             self.metadata_dialog_instance.update_metadata(metadata_dict, item_file_path_for_debug) # Pass file path for logging
-            self.metadata_dialog_instance.show() # Ensure it's visible
+            if not self.metadata_dialog_instance.isVisible():
+                self.metadata_dialog_instance.show() # Show it if it was somehow hidden but not None
         
         self.metadata_dialog_instance.raise_()
         self.metadata_dialog_instance.activateWindow()
@@ -989,3 +992,75 @@ class MainWindow(QMainWindow):
         # Final common deselection if operation was completed without error
         if status == 'completed' and not errors:
              self.deselect_all_thumbnails()
+
+    def _save_settings(self):
+        settings = {
+            "last_folder_path": self.current_folder_path,
+            "recursive_search": self.recursive_search_enabled
+        }
+        try:
+            with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=4)
+            logger.info(f"設定を保存しました: {APP_SETTINGS_FILE}")
+        except IOError as e:
+            logger.error(f"設定ファイルへの書き込み中にエラーが発生しました: {e}", exc_info=True)
+
+    def _load_settings(self):
+        try:
+            if os.path.exists(APP_SETTINGS_FILE):
+                with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                
+                last_folder_path = settings.get("last_folder_path")
+                if last_folder_path and os.path.isdir(last_folder_path):
+                    logger.info(f"前回終了時のフォルダパスを読み込みました: {last_folder_path} (ダイアログ初期位置用)")
+                    self.initial_dialog_path = last_folder_path
+                    # Do not automatically load the folder view, just set for dialog
+                else:
+                    if last_folder_path: # Path was in settings but not a valid dir
+                         logger.warning(f"保存されたフォルダパスが無効または見つかりません: {last_folder_path}")
+                
+                recursive_enabled_from_settings = settings.get("recursive_search")
+                if isinstance(recursive_enabled_from_settings, bool):
+                    # This will trigger the toggled signal if the state changes,
+                    # which in turn calls handle_recursive_search_toggled to update
+                    # self.recursive_search_enabled and the button text.
+                    self.recursive_toggle_button.setChecked(recursive_enabled_from_settings)
+                    logger.info(f"再帰検索設定を読み込みました: {'ON' if recursive_enabled_from_settings else 'OFF'}")
+                # If not found or not bool, it will retain its default initialized state from __init__
+                # and the button's initial setChecked state.
+            else:
+                logger.info(f"設定ファイルが見つかりません ({APP_SETTINGS_FILE})。デフォルト状態で起動します。")
+
+        except json.JSONDecodeError as e:
+            logger.error(f"設定ファイルの読み込み中にJSONデコードエラーが発生しました: {e}", exc_info=True)
+        except IOError as e:
+            logger.error(f"設定ファイルの読み込み中にIOエラーが発生しました: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"設定の読み込み中に予期せぬエラーが発生しました: {e}", exc_info=True)
+
+
+    def closeEvent(self, event: QCloseEvent): # Add type hint for event
+        logger.info("アプリケーション終了処理を開始します...")
+        self._save_settings()
+        # Ensure threads are properly shut down if any are running
+        if self.thumbnail_loader_thread and self.thumbnail_loader_thread.isRunning():
+            logger.info("サムネイル読み込みスレッドを停止します...")
+            self.thumbnail_loader_thread.stop()
+            self.thumbnail_loader_thread.quit()
+            if not self.thumbnail_loader_thread.wait(3000): # Wait up to 3 seconds
+                logger.warning("サムネイル読み込みスレッドの終了待機がタイムアウトしました。")
+        
+        if self.file_operations._thread and self.file_operations._thread.isRunning():
+            logger.info("ファイル操作スレッドに停止を要求します...")
+            self.file_operations.stop_operation()
+            # Wait a bit for the thread to acknowledge and finish
+            # Note: This might block UI if wait is too long.
+            # Consider if a more sophisticated shutdown is needed for file_operations.
+            # For now, a short wait.
+            if not self.file_operations._thread.wait(1000):
+                 logger.warning("ファイル操作スレッドの終了待機がタイムアウトしました。")
+
+
+        logger.info("アプリケーションを終了します。")
+        super().closeEvent(event)

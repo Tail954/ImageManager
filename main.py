@@ -9,7 +9,7 @@ if __name__ == "__main__":
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr), # Log to console
-            logging.FileHandler("imagemanager.log", encoding='utf-8') # Log to file
+            # logging.FileHandler("imagemanager.log", encoding='utf-8') # Log to file (temporarily disabled)
         ]
     )
     logger = logging.getLogger(__name__)
