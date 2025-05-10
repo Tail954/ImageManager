@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
+from PyQt6.QtWidgets import QStyledItemDelegate, QStyle, QListView
 from PyQt6.QtGui import QColor, QPen, QBrush
-from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtCore import Qt, QRectF, QSize # Added QSize
 
 class ThumbnailDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -12,14 +12,20 @@ class ThumbnailDelegate(QStyledItemDelegate):
         # Draw the default item painting
         super().paint(painter, option, index)
 
-        # If the item is selected, draw a border around it
-        if option.state & QStyle.StateFlag.State_Selected:
-            # Delegate will no longer draw the selection border.
-            # This will be handled by QListView's stylesheet.
-            # Print statements for debugging were here, now removed.
-            pass
+        # Selection border is handled by QListView's stylesheet.
+        # if option.state & QStyle.StateFlag.State_Selected:
+        #     pass
 
-    # We might need to override sizeHint if the border significantly changes item size perception,
-    # but with QListView.setUniformItemSizes(True) and setGridSize,
-    # the layout is already fixed, so sizeHint might not be strictly necessary for layout.
-    # However, if the border makes items appear to need more space, this could be adjusted.
+    def sizeHint(self, option, index):
+        # Get the parent view (QListView)
+        view = self.parent()
+        if isinstance(view, QListView): # Check if parent is a QListView
+            # In IconMode with uniformItemSizes, gridSize is the authority.
+            # The iconSize is the size of the icon within this grid cell.
+            # sizeHint should return the total space for the item.
+            grid_s = view.gridSize()
+            if grid_s.isValid():
+                return grid_s
+        
+        # Fallback to base implementation if view is not QListView or gridSize is not set
+        return super().sizeHint(option, index)

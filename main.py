@@ -8,8 +8,8 @@ if __name__ == "__main__":
         level=logging.DEBUG, # Changed to DEBUG
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.StreamHandler(sys.stderr) # Log to console
-            # Future: logging.FileHandler("app.log") # Log to file
+            logging.StreamHandler(sys.stderr), # Log to console
+            logging.FileHandler("imagemanager.log", encoding='utf-8') # Log to file
         ]
     )
     logger = logging.getLogger(__name__)

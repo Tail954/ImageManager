@@ -125,18 +125,25 @@ class MainWindow(QMainWindow):
 
         self.positive_prompt_filter_edit = QLineEdit()
         self.positive_prompt_filter_edit.setPlaceholderText("Positive Prompt を含む...")
-        self.positive_prompt_filter_edit.textChanged.connect(self.apply_filters)
+        # self.positive_prompt_filter_edit.textChanged.connect(self.apply_filters) # Disconnect textChanged
+        self.positive_prompt_filter_edit.returnPressed.connect(self.apply_filters) # Connect returnPressed
         filter_layout.addWidget(self.positive_prompt_filter_edit)
 
         self.negative_prompt_filter_edit = QLineEdit()
         self.negative_prompt_filter_edit.setPlaceholderText("Negative Prompt を含む...")
-        self.negative_prompt_filter_edit.textChanged.connect(self.apply_filters)
+        # self.negative_prompt_filter_edit.textChanged.connect(self.apply_filters) # Disconnect textChanged
+        self.negative_prompt_filter_edit.returnPressed.connect(self.apply_filters) # Connect returnPressed
         filter_layout.addWidget(self.negative_prompt_filter_edit)
 
         self.generation_info_filter_edit = QLineEdit()
         self.generation_info_filter_edit.setPlaceholderText("Generation Info を含む...")
-        self.generation_info_filter_edit.textChanged.connect(self.apply_filters)
+        # self.generation_info_filter_edit.textChanged.connect(self.apply_filters) # Disconnect textChanged
+        self.generation_info_filter_edit.returnPressed.connect(self.apply_filters) # Connect returnPressed
         filter_layout.addWidget(self.generation_info_filter_edit)
+
+        self.apply_filter_button = QPushButton("フィルタ適用")
+        self.apply_filter_button.clicked.connect(self.apply_filters)
+        filter_layout.addWidget(self.apply_filter_button)
         
         left_layout.addWidget(filter_group_box)
         # --- End Filter UI ---
@@ -435,6 +442,9 @@ class MainWindow(QMainWindow):
         logger.info("すべてのサムネイルの選択を解除しました。")
 
     def apply_filters(self):
+        # Clear current selection before applying filters
+        self.deselect_all_thumbnails() # Or self.thumbnail_view.clearSelection() and self.selected_file_paths.clear()
+
         if self.filter_proxy_model:
             search_mode = "AND" if self.and_radio_button.isChecked() else "OR"
             self.filter_proxy_model.set_search_mode(search_mode)
