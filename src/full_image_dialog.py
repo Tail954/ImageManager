@@ -6,12 +6,18 @@ from PyQt6.QtCore import Qt, QSize, QByteArray
 
 logger = logging.getLogger(__name__)
 
+# Define constants for preview modes at the module level if they are also used by MainWindow
+PREVIEW_MODE_FIT = "fit"
+PREVIEW_MODE_ORIGINAL_ZOOM = "original_zoom"
+
 class FullImageDialog(QDialog):
-    def __init__(self, image_path_list, current_index, parent=None):
+    def __init__(self, image_path_list, current_index, preview_mode=PREVIEW_MODE_FIT, parent=None):
         super().__init__(parent)
         self.all_image_paths = image_path_list
         self.current_index = current_index
         self.image_path = self.all_image_paths[self.current_index] if self.all_image_paths and 0 <= self.current_index < len(self.all_image_paths) else None
+        self.preview_mode = preview_mode
+        self.scale_factor = 1.0 # For original_zoom mode
         
         self.pixmap = QPixmap()
         self.saved_geometry = None # For storing geometry before maximizing
@@ -21,45 +27,53 @@ class FullImageDialog(QDialog):
         
         # Main layout
         main_layout = QVBoxLayout(self)
-        # layout.setContentsMargins(0,0,0,0) # Keep some margins for controls
+        # layout.setContentsMargins(0,0,0,0) # Keep some margins for controls if needed, or set on specific layouts
 
         # Controls layout (for navigation and fullscreen button)
-        controls_layout = QHBoxLayout()
+        self.controls_layout = QHBoxLayout() # Made it a member for potential future modifications
         
         self.prev_button = QPushButton("← Previous")
         self.prev_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.prev_button.clicked.connect(self.show_previous_image)
-        controls_layout.addWidget(self.prev_button)
+        self.controls_layout.addWidget(self.prev_button)
 
         self.counter_label = QLabel("")
         self.counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        controls_layout.addWidget(self.counter_label)
+        self.controls_layout.addWidget(self.counter_label)
 
         self.next_button = QPushButton("Next →")
         self.next_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.next_button.clicked.connect(self.show_next_image)
-        controls_layout.addWidget(self.next_button)
+        self.controls_layout.addWidget(self.next_button)
         
-        controls_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)) # Spacer
+        self.controls_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
-        self.fullscreen_button = QPushButton("□") # Maximize symbol
+        self.fullscreen_button = QPushButton("□")
         self.fullscreen_button.setFixedSize(30, 30)
         self.fullscreen_button.setToolTip("最大化/元に戻す")
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen_state)
-        controls_layout.addWidget(self.fullscreen_button)
+        self.controls_layout.addWidget(self.fullscreen_button)
         
-        main_layout.addLayout(controls_layout)
+        main_layout.addLayout(self.controls_layout)
 
-        # Image label
-        self.image_label = QLabel(self)
+        # Image display area (QLabel or QScrollArea containing QLabel)
+        self.image_label = QLabel(self) # This will be the widget inside scroll_area for original_zoom mode
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Make the label expand to take available space
-        self.image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        main_layout.addWidget(self.image_label, 1) # Add with stretch factor
+        
+        if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM:
+            from PyQt6.QtWidgets import QScrollArea # Local import for clarity
+            self.scroll_area = QScrollArea(self)
+            self.scroll_area.setWidgetResizable(False) # Important for original size + zoom
+            self.scroll_area.setWidget(self.image_label)
+            self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            main_layout.addWidget(self.scroll_area, 1)
+        else: # PREVIEW_MODE_FIT (default)
+            self.image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+            main_layout.addWidget(self.image_label, 1)
 
         self.setLayout(main_layout)
         
-        self._load_and_display_image()
+        self._load_and_display_image() # This will also call _update_navigation_buttons
         self.resize(800, 600)
 
     def update_image(self, new_image_path_list, new_current_index):
@@ -164,23 +178,92 @@ class FullImageDialog(QDialog):
 
     def _update_image_display(self):
         if self.pixmap.isNull():
+            self.image_label.clear() # Clear the label if pixmap is null
             return
-            
-        # Scale pixmap to fit the label while keeping aspect ratio
-        # Use self.image_label.size() for scaling target
-        scaled_pixmap = self.pixmap.scaled(
-            self.image_label.size(), 
-            Qt.AspectRatioMode.KeepAspectRatio, 
-            Qt.TransformationMode.SmoothTransformation
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+
+        if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM:
+            scaled_pixmap = self.pixmap.scaled(
+                int(self.pixmap.width() * self.scale_factor),
+                int(self.pixmap.height() * self.scale_factor),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+            self.image_label.adjustSize() # Adjust label size to pixmap
+        else: # PREVIEW_MODE_FIT
+            # Scale pixmap to fit the label (or scroll area viewport if applicable)
+            # For fit mode, image_label is directly in main_layout, so self.image_label.size() is fine.
+            target_size = self.image_label.size()
+            # If image_label is inside scroll_area (even if not original_zoom mode, though current logic doesn't do that),
+            # it might be better to scale to scroll_area.viewport().size().
+            # However, current structure for FIT mode, image_label is a direct child of main_layout.
+            scaled_pixmap = self.pixmap.scaled(
+                target_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
 
     def resizeEvent(self, event):
         """Handle resize events to rescale the image."""
         super().resizeEvent(event)
-        # When the dialog (and thus the label, if it's the only central widget) resizes,
-        # update the pixmap display.
-        self._update_image_display()
+        if self.preview_mode == PREVIEW_MODE_FIT:
+            self._update_image_display()
+        # For ORIGINAL_ZOOM mode, dialog resize doesn't change image scale, only viewport.
+
+    def wheelEvent(self, event):
+        if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.scale_factor *= 1.1
+            else:
+                self.scale_factor /= 1.1
+            # Clamp scale factor to reasonable limits if desired
+            self.scale_factor = max(0.1, min(self.scale_factor, 10.0)) 
+            logger.debug(f"Zoom: Scale factor set to {self.scale_factor:.2f}")
+            self._update_image_display()
+            event.accept()
+        elif self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM:
+            # Allow normal wheel scroll for the QScrollArea
+            # The event is on the QDialog, so we need to pass it to the scroll_area if it's the intended target
+            # However, QScrollArea usually handles wheel events on its viewport automatically.
+            # If super().wheelEvent doesn't work as expected, direct manipulation of scrollbar might be needed.
+            super().wheelEvent(event) 
+        else:
+            super().wheelEvent(event)
+
+
+    _drag_start_pos = None
+    _scroll_bar_values_on_drag_start_h = 0
+    _scroll_bar_values_on_drag_start_v = 0
+
+    def mousePressEvent(self, event):
+        if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM and event.button() == Qt.MouseButton.LeftButton:
+            if self.scroll_area.horizontalScrollBar().isVisible() or self.scroll_area.verticalScrollBar().isVisible():
+                self._drag_start_pos = event.pos()
+                self._scroll_bar_values_on_drag_start_h = self.scroll_area.horizontalScrollBar().value()
+                self._scroll_bar_values_on_drag_start_v = self.scroll_area.verticalScrollBar().value()
+                self.image_label.setCursor(Qt.CursorShape.ClosedHandCursor) # Use ClosedHandCursor
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM and self._drag_start_pos is not None:
+            delta = event.pos() - self._drag_start_pos
+            self.scroll_area.horizontalScrollBar().setValue(self._scroll_bar_values_on_drag_start_h - delta.x())
+            self.scroll_area.verticalScrollBar().setValue(self._scroll_bar_values_on_drag_start_v - delta.y())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM and event.button() == Qt.MouseButton.LeftButton and self._drag_start_pos is not None:
+            self._drag_start_pos = None
+            self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     # Optional: Close on Escape key & Navigation
     def keyPressEvent(self, event):

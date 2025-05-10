@@ -18,6 +18,8 @@ from .image_metadata_dialog import ImageMetadataDialog
 from .thumbnail_list_view import ToggleSelectionListView # Import custom ListView
 from .file_operations import FileOperations # Import FileOperations
 from .renamed_files_dialog import RenamedFilesDialog # Import new dialog
+from .full_image_dialog import FullImageDialog # Import the new full image dialog
+from .settings_dialog import SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM # Import settings dialog and constants
 
 # PillowのImageオブジェクトをQImageに変換するために必要
 import logging # Add logging import
@@ -56,7 +58,14 @@ class MainWindow(QMainWindow):
         self.progress_dialog = None # For cancellation dialog
         self.initial_dialog_path = None # For storing path from settings
         self.metadata_dialog_last_geometry = None # To store the last geometry of the metadata dialog
-        # self._load_settings() # Load settings on startup - MOVED TO END OF __init__
+        self.full_image_dialog_instance = None # To store the single instance of FullImageDialog
+        self.image_preview_mode = PREVIEW_MODE_FIT # Default, will be overwritten by _load_app_settings
+        
+        # Load application-wide settings first
+        self._load_app_settings() 
+
+        # Menu Bar
+        self._create_menu_bar()
 
         # Status bar
         self.statusBar = self.statusBar()
@@ -96,21 +105,6 @@ class MainWindow(QMainWindow):
         self.recursive_toggle_button.setChecked(self.recursive_search_enabled)
         self.recursive_toggle_button.toggled.connect(self.handle_recursive_search_toggled)
         left_layout.addWidget(self.recursive_toggle_button)
-
-        size_control_layout = QHBoxLayout()
-        self.size_label = QLabel(f"サイズ: {self.current_thumbnail_size}px")
-        size_control_layout.addWidget(self.size_label)
-        
-        self.size_slider = QSlider(Qt.Orientation.Horizontal)
-        self.size_slider.setMinimum(0)
-        self.size_slider.setMaximum(len(self.available_sizes) - 1)
-        self.size_slider.setValue(self.available_sizes.index(self.current_thumbnail_size))
-        self.size_slider.setTickInterval(1)
-        self.size_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.size_slider.valueChanged.connect(self.handle_slider_value_changed)
-        self.size_slider.sliderReleased.connect(self.trigger_thumbnail_reload)
-        size_control_layout.addWidget(self.size_slider)
-        left_layout.addLayout(size_control_layout)
 
         # --- Filter UI Elements ---
         filter_group_box = QFrame() # Using QFrame for visual grouping, could be QGroupBox
@@ -220,6 +214,7 @@ class MainWindow(QMainWindow):
         # self.thumbnail_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu) # No longer needed
         # self.thumbnail_view.customContextMenuRequested.connect(self.show_thumbnail_context_menu) # No longer needed
         self.thumbnail_view.metadata_requested.connect(self.handle_metadata_requested) # Connect new signal
+        self.thumbnail_view.item_double_clicked.connect(self.handle_thumbnail_double_clicked) # Connect custom double click signal
         
         self.thumbnail_delegate = ThumbnailDelegate(self.thumbnail_view) # Create delegate instance
         self.thumbnail_view.setItemDelegate(self.thumbnail_delegate) # Set delegate
@@ -247,7 +242,119 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 900])
         main_layout.addWidget(splitter)
 
-        self._load_settings() # Load settings after all UI elements are initialized
+        self._load_settings() # Load UI specific settings after all UI elements are initialized
+
+    def _create_menu_bar(self):
+        menu_bar = self.menuBar()
+        settings_action = QAction("&設定", self)
+        settings_action.triggered.connect(self._open_settings_dialog)
+        menu_bar.addAction(settings_action)
+
+    def _open_settings_dialog(self):
+        dialog = SettingsDialog(
+            current_thumbnail_size=self.current_thumbnail_size,
+            available_thumbnail_sizes=self.available_sizes,
+            current_preview_mode=self.image_preview_mode, # Pass current preview mode
+            parent=self
+        )
+        if dialog.exec():
+            # Preview mode handling
+            new_preview_mode = dialog.get_selected_preview_mode()
+            if self.image_preview_mode != new_preview_mode:
+                self.image_preview_mode = new_preview_mode
+                logger.info(f"画像表示モードが変更されました: {self.image_preview_mode}")
+                # MainWindow will save all settings together in _save_settings or here
+
+            # Thumbnail size handling
+            new_thumbnail_size = dialog.get_selected_thumbnail_size()
+            old_thumbnail_size = self.current_thumbnail_size # Store before potential change by dialog
+
+            if new_thumbnail_size != old_thumbnail_size:
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Icon.Question)
+                msg_box.setWindowTitle("サムネイルサイズ変更の確認")
+                msg_box.setText(f"サムネイルサイズを {new_thumbnail_size}px に変更しますか？\n"
+                                 "表示中の全サムネイルが再生成されます。\n"
+                                 "画像の枚数によっては時間がかかる場合があります。")
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+                msg_box.setDefaultButton(QMessageBox.StandardButton.Ok)
+                reply = msg_box.exec()
+
+                if reply == QMessageBox.StandardButton.Ok:
+                    logger.info(f"ユーザーがサムネイルサイズ変更を承認: {old_thumbnail_size}px -> {new_thumbnail_size}px")
+                    if self.apply_thumbnail_size_change(new_thumbnail_size):
+                        # self.current_thumbnail_size is updated within apply_thumbnail_size_change
+                        logger.info(f"サムネイルサイズが {self.current_thumbnail_size}px に適用されました。")
+                    else:
+                        # Change was not applied (e.g., loading, or same size)
+                        # Revert the dialog's potential change if it wasn't applied by MainWindow
+                        # This path should ideally not be hit if apply_thumbnail_size_change handles all cases
+                        logger.warning(f"サムネイルサイズ変更 {new_thumbnail_size}px の適用に失敗、または変更なし。")
+                        # No need to revert self.current_thumbnail_size as it's only set on success in apply_thumbnail_size_change
+                else:
+                    logger.info("ユーザーがサムネイルサイズ変更をキャンセルしました。")
+                    # If user cancels, we should ensure the dialog reflects the original size if it was changed internally
+                    # For now, SettingsDialog is expected to manage its internal state until OK.
+                    # If OK is pressed and then this confirmation is cancelled, the setting should not persist.
+                    # The new_thumbnail_size from dialog.get_selected_thumbnail_size() was the one *before* this confirmation.
+                    # We don't update self.current_thumbnail_size.
+                    # The settings file will be written with the *original* self.current_thumbnail_size
+                    # unless the user confirmed the change.
+
+            # Save all settings (including potentially updated preview mode and thumbnail size)
+            # This ensures that even if only one setting was changed in the dialog,
+            # all settings managed by MainWindow are saved correctly.
+            current_app_settings = self._read_app_settings_file()
+            current_app_settings["image_preview_mode"] = self.image_preview_mode
+            current_app_settings["thumbnail_size"] = self.current_thumbnail_size # Save the confirmed size
+            self._write_app_settings_file(current_app_settings)
+            logger.info("設定ダイアログがOKで閉じられました。設定を保存しました。")
+
+        else:
+            logger.info("設定ダイアログがキャンセルされました。変更は保存されません。")
+
+    def _read_app_settings_file(self):
+        """Reads the entire app_settings.json file."""
+        # This method is similar to SettingsDialog._load_settings but only reads.
+        # Consider refactoring to a common utility if this becomes unwieldy.
+        try:
+            if os.path.exists(APP_SETTINGS_FILE):
+                with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                    return settings
+        except Exception as e:
+            logger.error(f"Error reading {APP_SETTINGS_FILE} in MainWindow: {e}")
+        return {} # Return empty dict on error or if file doesn't exist
+
+    def _write_app_settings_file(self, settings_dict):
+        """Writes the given dictionary to app_settings.json."""
+        try:
+            with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(settings_dict, f, indent=4)
+            logger.info(f"App settings saved via MainWindow to {APP_SETTINGS_FILE}")
+        except Exception as e:
+            logger.error(f"Error writing to {APP_SETTINGS_FILE} via MainWindow: {e}")
+
+    def _load_app_settings(self):
+        """Loads application-specific settings like image_preview_mode."""
+        # This method should ideally be the single source for loading from APP_SETTINGS_FILE
+        # for settings MainWindow cares about.
+        
+        settings = self._read_app_settings_file()
+        self.image_preview_mode = settings.get("image_preview_mode", PREVIEW_MODE_FIT)
+        logger.info(f"読み込まれた画像表示モード (MainWindow): {self.image_preview_mode}")
+        
+        # Load thumbnail size
+        loaded_thumbnail_size = settings.get("thumbnail_size", self.available_sizes[1]) # Default to 128 if not found
+        if loaded_thumbnail_size in self.available_sizes:
+            self.current_thumbnail_size = loaded_thumbnail_size
+        else:
+            logger.warning(f"保存されたサムネイルサイズ {loaded_thumbnail_size}px は無効です。デフォルトの {self.available_sizes[1]}px を使用します。")
+            self.current_thumbnail_size = self.available_sizes[1]
+        logger.info(f"読み込まれたサムネイルサイズ (MainWindow): {self.current_thumbnail_size}px")
+
+        # _load_settings() handles UI state like last folder, recursive search.
+        # These are loaded separately as they might affect UI elements directly during init.
 
     def select_folder(self):
         start_dir = ""
@@ -315,7 +422,7 @@ class MainWindow(QMainWindow):
             logger.info(f"見つかった画像ファイル (再帰検索{'含む' if self.recursive_search_enabled else '含まない'}): {len(image_files)}個")
             
             self.is_loading_thumbnails = True
-            self.size_slider.setEnabled(False) 
+            # self.size_slider.setEnabled(False) # Removed
             self.folder_tree_view.setEnabled(False)
             self.recursive_toggle_button.setEnabled(False)
             self.deselect_all_button.setEnabled(False)
@@ -369,7 +476,7 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar.showMessage("フォルダに画像がありません", 5000)
             self.is_loading_thumbnails = False # Reset flag if no files
-            self.size_slider.setEnabled(True)
+            # self.size_slider.setEnabled(True) # Removed
             self.folder_tree_view.setEnabled(True)
             self.recursive_toggle_button.setEnabled(True)
             self.deselect_all_button.setEnabled(True)
@@ -378,38 +485,36 @@ class MainWindow(QMainWindow):
             self.negative_prompt_filter_edit.setEnabled(True)
             self.generation_info_filter_edit.setEnabled(True)
 
-
-    def handle_slider_value_changed(self, value):
-        preview_size = self.available_sizes[value]
-        self.size_label.setText(f"サイズ: {preview_size}px")
-
     def handle_recursive_search_toggled(self, checked):
         self.recursive_search_enabled = checked
         self.recursive_toggle_button.setText(f"サブフォルダ検索: {'ON' if checked else 'OFF'}")
         logger.info(f"再帰検索設定変更: {'ON' if checked else 'OFF'}. 次回フォルダ読み込み時に適用されます。")
 
-    def trigger_thumbnail_reload(self):
+    def apply_thumbnail_size_change(self, new_size):
         if self.is_loading_thumbnails:
             logger.info("現在サムネイル読み込み中のため、サイズ変更はスキップされました。")
-            current_value_index = self.available_sizes.index(self.current_thumbnail_size)
-            if self.size_slider.value() != current_value_index:
-                self.size_slider.setValue(current_value_index)
-                self.size_label.setText(f"サイズ: {self.current_thumbnail_size}px")
-            return
+            return False # Indicate that the change was not applied
 
-        slider_selected_index = self.size_slider.value()
-        new_selected_size = self.available_sizes[slider_selected_index]
+        if new_size not in self.available_sizes:
+            logger.warning(f"要求されたサムネイルサイズ {new_size}px は利用可能なサイズではありません。")
+            return False
 
-        if new_selected_size != self.current_thumbnail_size:
-            self.current_thumbnail_size = new_selected_size
+        if new_size != self.current_thumbnail_size:
+            self.current_thumbnail_size = new_size
+            logger.info(f"サムネイルサイズを {self.current_thumbnail_size}px に変更します。")
             if self.current_folder_path:
                 logger.info(f"サムネイルサイズ変更適用: {self.current_thumbnail_size}px. 再読み込み開始...")
                 self.load_thumbnails_from_folder(self.current_folder_path)
+                return True # Change applied
             else:
-                logger.info("再読み込みするフォルダが選択されていません。")
+                logger.info("再読み込みするフォルダが選択されていません。サイズは次回フォルダ選択時に適用されます。")
+                # Update icon and grid sizes for next load, even if no folder is current
+                self.thumbnail_view.setIconSize(QSize(self.current_thumbnail_size, self.current_thumbnail_size))
+                self.thumbnail_view.setGridSize(QSize(self.current_thumbnail_size + 10, self.current_thumbnail_size + 10))
+                return True # Size preference updated
         else:
-            self.size_label.setText(f"サイズ: {self.current_thumbnail_size}px")
             logger.info("選択されたサイズは現在のサイズと同じため、再読み込みは行いません。")
+            return False # No change needed
 
     def update_progress_bar(self, processed_count, total_files):
         self.statusBar.showMessage(f"サムネイル読み込み中... {processed_count}/{total_files}")
@@ -454,7 +559,7 @@ class MainWindow(QMainWindow):
         logger.info("サムネイルの非同期読み込みが完了しました。")
         self.statusBar.showMessage("サムネイル読み込み完了", 5000)
         self.is_loading_thumbnails = False
-        self.size_slider.setEnabled(True) 
+        # self.size_slider.setEnabled(True) # Removed
         self.folder_tree_view.setEnabled(True)
         self.recursive_toggle_button.setEnabled(True)
         self.deselect_all_button.setEnabled(True)
@@ -663,11 +768,83 @@ class MainWindow(QMainWindow):
         # Slot to be called when the metadata dialog is closed.
         sender_dialog = self.sender()
         if sender_dialog == self.metadata_dialog_instance:
-            if isinstance(sender_dialog, QDialog): # Ensure it's a QDialog instance
+            if isinstance(sender_dialog, QDialog):
                  self.metadata_dialog_last_geometry = sender_dialog.geometry()
                  logger.debug(f"Metadata dialog closed. Stored geometry: {self.metadata_dialog_last_geometry}")
             self.metadata_dialog_instance = None
-            # logger.debug("Metadata dialog instance reference cleared.")
+
+    def _on_full_image_dialog_finished(self):
+        """Slot to clear the reference when FullImageDialog is closed."""
+        if self.sender() == self.full_image_dialog_instance:
+            logger.debug("FullImageDialog closed, clearing instance reference.")
+            self.full_image_dialog_instance = None
+
+    def handle_thumbnail_double_clicked(self, proxy_index):
+        if not proxy_index.isValid():
+            logger.debug("handle_thumbnail_double_clicked: Received invalid proxy_index.")
+            return
+
+        source_index = self.filter_proxy_model.mapToSource(proxy_index)
+        item = self.source_thumbnail_model.itemFromIndex(source_index)
+        if not item:
+            logger.debug(f"handle_thumbnail_double_clicked: Could not get item from source_index {source_index.row()},{source_index.column()}.")
+            return
+
+        file_path = item.data(Qt.ItemDataRole.UserRole)
+        if not file_path:
+            logger.warning(f"handle_thumbnail_double_clicked: No file path associated with item at proxy_index {proxy_index.row()},{proxy_index.column()}.")
+            return
+        
+        logger.info(f"Thumbnail double-clicked: {file_path}")
+        
+        
+        logger.info(f"Thumbnail double-clicked: {file_path}")
+
+        # Prepare list of all currently visible (filtered) image paths
+        visible_image_paths = []
+        for row in range(self.filter_proxy_model.rowCount()):
+            proxy_idx = self.filter_proxy_model.index(row, 0)
+            source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
+            item = self.source_thumbnail_model.itemFromIndex(source_idx)
+            if item:
+                visible_image_paths.append(item.data(Qt.ItemDataRole.UserRole))
+        
+        current_idx_in_visible_list = -1
+        if file_path in visible_image_paths:
+            current_idx_in_visible_list = visible_image_paths.index(file_path)
+        else:
+            # Should not happen if double-clicked item is from the view
+            logger.error(f"Double-clicked file path {file_path} not found in visible items list.")
+            return
+
+        try:
+            if self.full_image_dialog_instance is None:
+                logger.debug(f"No existing FullImageDialog instance, creating new one with mode: {self.image_preview_mode}")
+                self.full_image_dialog_instance = FullImageDialog(
+                    visible_image_paths, 
+                    current_idx_in_visible_list, 
+                    preview_mode=self.image_preview_mode, # Pass the preview mode
+                    parent=self
+                )
+                self.full_image_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                self.full_image_dialog_instance.finished.connect(self._on_full_image_dialog_finished)
+                self.full_image_dialog_instance.show()
+            else:
+                logger.debug(f"Existing FullImageDialog instance found, updating image list, index, and mode: {self.image_preview_mode}")
+                # update_image in FullImageDialog needs to accept preview_mode if it can change dynamically
+                # For now, FullImageDialog sets its mode on __init__. If mode changes while dialog is open,
+                # it won't reflect until dialog is recreated.
+                # The current update_image in FullImageDialog doesn't take preview_mode.
+                # This implies that if the setting changes, an open dialog won't change its mode.
+                # This is acceptable for now as per plan.
+                self.full_image_dialog_instance.update_image(visible_image_paths, current_idx_in_visible_list)
+        except Exception as e:
+            logger.error(f"Error opening or updating full image dialog for {file_path}: {e}", exc_info=True)
+            QMessageBox.critical(self, "画像表示エラー", f"画像ダイアログの表示・更新中にエラーが発生しました:\n{e}")
+            if self.full_image_dialog_instance: # If instance exists but failed, clear it
+                self.full_image_dialog_instance.close() # Attempt to close gracefully
+                self.full_image_dialog_instance = None
+
 
     # --- File Operation Handlers ---
     def _handle_copy_mode_toggled(self, checked):
@@ -1008,16 +1185,18 @@ class MainWindow(QMainWindow):
              self.deselect_all_thumbnails()
 
     def _save_settings(self):
-        settings = {
-            "last_folder_path": self.current_folder_path,
-            "recursive_search": self.recursive_search_enabled
-        }
-        try:
-            with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, indent=4)
-            logger.info(f"設定を保存しました: {APP_SETTINGS_FILE}")
-        except IOError as e:
-            logger.error(f"設定ファイルへの書き込み中にエラーが発生しました: {e}", exc_info=True)
+        # Read existing settings first to preserve other values like image_preview_mode
+        settings = self._read_app_settings_file() 
+        
+        # Update the settings MainWindow is responsible for
+        settings["last_folder_path"] = self.current_folder_path
+        settings["recursive_search"] = self.recursive_search_enabled
+        settings["image_preview_mode"] = self.image_preview_mode 
+        settings["thumbnail_size"] = self.current_thumbnail_size # Ensure this is also saved
+
+        # Write the combined settings back
+        self._write_app_settings_file(settings)
+        # logger.info(f"設定を保存しました (MainWindow): {APP_SETTINGS_FILE}") # _write_app_settings_file already logs
 
     def _load_settings(self):
         try:

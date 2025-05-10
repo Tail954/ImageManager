@@ -4,6 +4,8 @@ from PyQt6.QtCore import Qt, QItemSelectionModel, pyqtSignal, QModelIndex
 class ToggleSelectionListView(QListView):
     # Signal to request metadata display for a given index
     metadata_requested = pyqtSignal(QModelIndex)
+    # Signal for custom double click handling, as mousePressEvent accepts the event
+    item_double_clicked = pyqtSignal(QModelIndex)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,4 +70,13 @@ class ToggleSelectionListView(QListView):
             # スクロールバーがない場合は、デフォルトの処理に任せる
             super().wheelEvent(event)
 
-    # selectionChangedシグナルは通常通りMainWindowで処理できる
+        # selectionChangedシグナルは通常通りMainWindowで処理できる
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                self.item_double_clicked.emit(index)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
