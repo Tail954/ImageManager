@@ -39,4 +39,24 @@ class ToggleSelectionListView(QListView):
             return
         super().mouseMoveEvent(event)
 
+    def wheelEvent(self, event):
+        # QWheelEvent.angleDelta().y() は通常、1ステップあたり120の倍数（15度 * 8）
+        # 正の値はユーザーから離れる方向（通常は下にスクロール）、負の値はユーザーに向かう方向（通常は上にスクロール）
+        angle = event.angleDelta().y()
+        
+        # スクロールするピクセル数を決定（この値は調整が必要な場合があります）
+        # angleDelta() は1/8度単位なので、8で割ると度数に近い値になる
+        # ここでは、1度の回転で約3ピクセルスクロールするように調整（例）
+        # マイナスをかけて方向を調整（angleDelta().y()が正なら下にスクロールしたいので、スクロールバーの値は増える）
+        pixels_to_scroll = - (angle / 8) * 3 
+
+        scrollbar = self.verticalScrollBar()
+        if scrollbar:
+            new_value = scrollbar.value() + int(pixels_to_scroll)
+            scrollbar.setValue(new_value)
+            event.accept() # イベントを処理したことを通知
+        else:
+            # スクロールバーがない場合は、デフォルトの処理に任せる
+            super().wheelEvent(event)
+
     # selectionChangedシグナルは通常通りMainWindowで処理できる
