@@ -953,3 +953,101 @@ class TestMainWindowMetadataDialogInteraction(unittest.TestCase):
 
         self.window.handle_metadata_requested(mock_proxy_idx_no_path)
         MockImageMetadataDialog.assert_not_called()
+
+
+class TestMainWindowUIActions(unittest.TestCase):
+    def setUp(self):
+        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
+        patches = [
+            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
+            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
+            patch('src.main_window.MainWindow._load_settings', MagicMock()),
+            patch('src.main_window.MainWindow._read_app_settings_file', return_value=self.mock_app_settings.copy()),
+            patch('src.main_window.MainWindow._write_app_settings_file', MagicMock(return_value=None))
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        self.window = MainWindow()
+        self.window.logger = MagicMock(spec=logging.Logger)
+
+        # Mock UI elements that are directly accessed by the methods under test
+        self.window.statusBar = MagicMock()
+        self.window.filter_proxy_model = MagicMock()
+        self.window.thumbnail_view = MagicMock()
+        self.window.thumbnail_view.selectionModel = MagicMock()
+        self.window.source_thumbnail_model = MagicMock() # For update_thumbnail_item
+
+    def tearDown(self):
+        # Clean up any resources if necessary
+        pass
+
+    def test_update_status_bar_info_no_items(self):
+        """Test _update_status_bar_info when there are no items."""
+        self.window.filter_proxy_model.rowCount.return_value = 0
+        self.window.thumbnail_view.selectionModel().selectedIndexes.return_value = []
+
+        self.window._update_status_bar_info()
+
+        self.window.statusBar.showMessage.assert_called_once_with("0 アイテム (0 選択)")
+
+    def test_update_status_bar_info_items_no_selection(self):
+        """Test _update_status_bar_info with items but no selection."""
+        self.window.filter_proxy_model.rowCount.return_value = 10
+        self.window.thumbnail_view.selectionModel().selectedIndexes.return_value = []
+
+        self.window._update_status_bar_info()
+
+        self.window.statusBar.showMessage.assert_called_once_with("10 アイテム (0 選択)")
+
+    def test_update_status_bar_info_items_with_selection(self):
+        """Test _update_status_bar_info with items and selection."""
+        self.window.filter_proxy_model.rowCount.return_value = 25
+        # Simulate 3 selected items
+        mock_selected_indexes = [MagicMock(), MagicMock(), MagicMock()]
+        self.window.thumbnail_view.selectionModel().selectedIndexes.return_value = mock_selected_indexes
+
+        self.window._update_status_bar_info()
+
+        self.window.statusBar.showMessage.assert_called_once_with("25 アイテム (3 選択)")
+
+    @patch('os.path.dirname')
+    def test_update_thumbnail_item_sets_tooltip(self, mock_os_path_dirname):
+        """Test update_thumbnail_item sets the tooltip correctly."""
+        mock_item = MagicMock() # Mock QStandardItem
+        test_file_path = "/path/to/some/image.jpg"
+        expected_dir_path = "/path/to/some"
+        mock_os_path_dirname.return_value = expected_dir_path
+
+        # Simulate item data for file path
+        mock_item.data.return_value = test_file_path
+
+        # The update_thumbnail_item method in MainWindow takes an item and its file_path
+        # However, the provided context shows it's called from _load_and_display_thumbnails
+        # and receives item and file_path.
+        # Let's assume the method signature is `update_thumbnail_item(self, item, file_path)`
+        # as per the context: `update_thumbnail_item()` メソッド内で、`item.setToolTip(f"場所: {os.path.dirname(file_path)}")`
+        # This implies file_path is passed or accessible.
+        # The method in main_window.py is `update_thumbnail_item(self, item, file_path, metadata, thumbnail_data)`
+        # We only care about item and file_path for the tooltip part.
+
+        self.window.update_thumbnail_item(mock_item, test_file_path, {}, None) # metadata and thumbnail_data are not used for tooltip
+
+        mock_item.setToolTip.assert_called_once_with(f"場所: {expected_dir_path}")
+        mock_os_path_dirname.assert_called_once_with(test_file_path)
+
+    @patch('os.path.dirname')
+    def test_update_thumbnail_item_sets_tooltip_windows_path(self, mock_os_path_dirname):
+        """Test update_thumbnail_item sets the tooltip correctly for Windows paths."""
+        mock_item = MagicMock()
+        test_file_path = "C:\\Users\\Test\\Pictures\\image.png"
+        expected_dir_path = "C:\\Users\\Test\\Pictures"
+        mock_os_path_dirname.return_value = expected_dir_path
+
+        mock_item.data.return_value = test_file_path
+
+        self.window.update_thumbnail_item(mock_item, test_file_path, {}, None)
+
+        mock_item.setToolTip.assert_called_once_with(f"場所: {expected_dir_path}")
+        mock_os_path_dirname.assert_called_once_with(test_file_path)

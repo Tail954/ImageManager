@@ -275,7 +275,22 @@ class MainWindow(QMainWindow):
 
         self._load_settings() # Load UI specific settings after all UI elements are initialized
         self._apply_sort_and_filter_update() # Apply initial sort based on loaded or default settings
+        self._update_status_bar_info() # Initial status bar update
 
+
+    def _update_status_bar_info(self):
+        if not hasattr(self, 'statusBar') or not self.statusBar:
+            return
+
+        total_items = 0
+        if self.filter_proxy_model:
+            total_items = self.filter_proxy_model.rowCount()
+
+        selected_items = 0
+        if hasattr(self, 'thumbnail_view') and self.thumbnail_view.selectionModel():
+            selected_items = len(self.thumbnail_view.selectionModel().selectedIndexes())
+
+        self.statusBar.showMessage(f"表示アイテム数: {total_items} / 選択アイテム数: {selected_items}")
 
     def _perform_sort(self):
         """
@@ -367,6 +382,7 @@ class MainWindow(QMainWindow):
             self.sort_order_button.setEnabled(True)
             sort_end_time = time.time()
             logger.info(f"Sort operation took: {sort_end_time - sort_start_time:.4f} seconds.")
+            self._update_status_bar_info() # Update status bar after sort
 
 
     def _toggle_sort_order_and_apply(self):
@@ -783,6 +799,10 @@ class MainWindow(QMainWindow):
             
         item.setData(metadata, METADATA_ROLE) # Store metadata dict directly
         # item.setData(mtime, MTIME_ROLE) # Store mtime # MTIME_ROLE removed
+
+        if file_path:
+            directory_path = os.path.dirname(file_path)
+            item.setToolTip(f"場所: {directory_path}")
                 
         # # --- End Debug Log ---
 
@@ -805,6 +825,8 @@ class MainWindow(QMainWindow):
 
         if self.filter_proxy_model: # Apply initial filter if model exists
             self.apply_filters(preserve_selection=True) # Preserve selection after loading
+        
+        self._update_status_bar_info() # Update status bar after loading
 
         if self.thumbnail_loader_thread:
             self.thumbnail_loader_thread.deleteLater()
@@ -895,6 +917,7 @@ class MainWindow(QMainWindow):
         
         # Update status bar or other UI elements based on selection count if needed
         # self.statusBar.showMessage(f"{len(self.selected_file_paths)} items selected")
+        self._update_status_bar_info()
 
 
     def select_all_thumbnails(self):
@@ -904,10 +927,12 @@ class MainWindow(QMainWindow):
             logger.info("すべての表示中サムネイルを選択しました。")
         else:
             logger.info("選択対象のサムネイルがありません。")
+        self._update_status_bar_info()
 
     def deselect_all_thumbnails(self):
         self.thumbnail_view.clearSelection()
         logger.info("すべてのサムネイルの選択を解除しました。")
+        self._update_status_bar_info()
 
     def apply_filters(self, preserve_selection=False): # Added preserve_selection parameter
         # Clear current selection before applying filters, unless preserving
@@ -925,6 +950,7 @@ class MainWindow(QMainWindow):
             # invalidateFilter() is called within the proxy model's setters for text filters
         else:
             logger.debug("Filter proxy model not yet initialized for apply_filters call.")
+        self._update_status_bar_info() # Update status bar after applying filters
 
     def handle_metadata_requested(self, proxy_index):
         if not proxy_index.isValid():
@@ -1305,6 +1331,7 @@ class MainWindow(QMainWindow):
                  # assuming user will re-select if some failed.
                  # A more precise way would be to remove only successful paths from selected_file_paths.
                  self.selected_file_paths.clear()
+                 self._update_status_bar_info() # Update status bar after model changes
             
             # After a move operation, the current folder view might be stale or show less items.
             # It's not strictly necessary to reload the entire folder view,
