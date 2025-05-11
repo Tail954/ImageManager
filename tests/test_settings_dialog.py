@@ -6,6 +6,8 @@ from PyQt6.QtGui import QPainter, QColor
 
 # Assuming src is in PYTHONPATH or tests are run from project root
 from src.settings_dialog import ThumbnailSizePreviewWidget, SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM
+from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU
+
 
 # Fixture to create a QApplication instance for tests that need it
 @pytest.fixture(scope="session")
@@ -107,6 +109,7 @@ class TestSettingsDialog:
     AVAILABLE_SIZES = [96, 128, 200]
     DEFAULT_THUMBNAIL_SIZE = 128
     DEFAULT_PREVIEW_MODE = PREVIEW_MODE_FIT
+    DEFAULT_RIGHT_CLICK_ACTION = RIGHT_CLICK_ACTION_METADATA # Default for tests
 
     @pytest.fixture
     def dialog(self, qt_app, mocker):
@@ -117,7 +120,8 @@ class TestSettingsDialog:
         dialog_instance = SettingsDialog(
             current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
             available_thumbnail_sizes=self.AVAILABLE_SIZES,
-            current_preview_mode=self.DEFAULT_PREVIEW_MODE
+            current_preview_mode=self.DEFAULT_PREVIEW_MODE,
+            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION # Pass new arg
         )
         return dialog_instance
 
@@ -126,6 +130,7 @@ class TestSettingsDialog:
         assert dialog.initial_thumbnail_size == self.DEFAULT_THUMBNAIL_SIZE
         assert dialog.available_thumbnail_sizes == self.AVAILABLE_SIZES
         assert dialog.initial_preview_mode == self.DEFAULT_PREVIEW_MODE
+        assert dialog.initial_right_click_action == self.DEFAULT_RIGHT_CLICK_ACTION
 
         # Check slider initialization
         assert dialog.thumbnail_size_slider.minimum() == 0
@@ -143,6 +148,18 @@ class TestSettingsDialog:
         # Check preview widget initialization
         assert dialog.thumbnail_preview_widget._size == self.DEFAULT_THUMBNAIL_SIZE
         assert dialog.thumbnail_size_label.text() == f"選択中: {self.DEFAULT_THUMBNAIL_SIZE}px"
+
+        # Check right-click action radio button initialization
+        assert dialog.metadata_action_radio is not None
+        assert dialog.menu_action_radio is not None
+        assert dialog.right_click_action_button_group is not None
+        if self.DEFAULT_RIGHT_CLICK_ACTION == RIGHT_CLICK_ACTION_METADATA:
+            assert dialog.metadata_action_radio.isChecked()
+            assert not dialog.menu_action_radio.isChecked()
+        else: # RIGHT_CLICK_ACTION_MENU
+            assert not dialog.metadata_action_radio.isChecked()
+            assert dialog.menu_action_radio.isChecked()
+
 
     def test_thumbnail_slider_changes_preview(self, dialog, mocker):
         mock_preview_set_size = mocker.patch.object(dialog.thumbnail_preview_widget, 'set_size')
@@ -169,6 +186,18 @@ class TestSettingsDialog:
 
         dialog.fit_mode_radio.setChecked(True)
         assert dialog.get_selected_preview_mode() == PREVIEW_MODE_FIT
+
+    def test_get_selected_right_click_action(self, dialog):
+        # Select "メタデータを表示"
+        dialog.metadata_action_radio.setChecked(True)
+        # QButtonGroup should handle exclusivity, but for robustness:
+        dialog.menu_action_radio.setChecked(False) 
+        assert dialog.get_selected_right_click_action() == RIGHT_CLICK_ACTION_METADATA
+
+        # Select "メニューを表示"
+        dialog.menu_action_radio.setChecked(True)
+        dialog.metadata_action_radio.setChecked(False)
+        assert dialog.get_selected_right_click_action() == RIGHT_CLICK_ACTION_MENU
         
     def test_accept_dialog(self, dialog, mocker):
         mock_super_accept = mocker.patch.object(QDialog, 'accept') # Mock QDialog.accept
@@ -202,14 +231,14 @@ class TestSettingsDialog:
             json.dump({"image_preview_mode": PREVIEW_MODE_ORIGINAL_ZOOM, "other_value": "test"}, f)
         
         mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(settings_file))
-        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE)
+        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION)
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_ORIGINAL_ZOOM
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM # Check if initial_preview_mode is also set
 
         # Case 2: File exists but setting is missing (should default)
         with open(settings_file, 'w') as f:
             json.dump({"other_value": "test"}, f)
-        dialog_instance_2 = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE)
+        dialog_instance_2 = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION)
         assert dialog_instance_2.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance_2.initial_preview_mode == PREVIEW_MODE_FIT
 
@@ -218,6 +247,6 @@ class TestSettingsDialog:
         non_existent_file = tmp_path / "non_existent_settings.json"
         mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(non_existent_file))
         
-        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE)
+        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION)
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_FIT

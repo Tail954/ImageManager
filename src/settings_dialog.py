@@ -1,10 +1,11 @@
 import logging
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QRadioButton, QDialogButtonBox, QApplication,
-    QSlider, QLabel, QHBoxLayout, QWidget, QSizePolicy
+    QSlider, QLabel, QHBoxLayout, QWidget, QSizePolicy, QComboBox, QButtonGroup
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPainter, QColor, QPen
+from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU
 import json
 import os
 
@@ -75,18 +76,19 @@ class ThumbnailSizePreviewWidget(QWidget):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, current_thumbnail_size, available_thumbnail_sizes, current_preview_mode, parent=None):
+    def __init__(self, current_thumbnail_size, available_thumbnail_sizes, current_preview_mode, current_right_click_action, parent=None):
         super().__init__(parent)
         self.setWindowTitle("設定")
-        self.setMinimumWidth(400) # Increased width for new controls
+        self.setMinimumWidth(450) # Increased width for new controls
 
         self.initial_thumbnail_size = current_thumbnail_size
         self.available_thumbnail_sizes = available_thumbnail_sizes
         self.current_selected_thumbnail_size = current_thumbnail_size # Tracks slider changes
+        self.initial_right_click_action = current_right_click_action
 
         # Load only preview mode from settings file for this dialog's direct responsibility
         # Thumbnail size is passed in and its persistence is handled by MainWindow
-        self.current_settings = self._load_preview_mode_setting()
+        self.current_settings = self._load_preview_mode_setting() # This loads only preview_mode
         self.initial_preview_mode = self.current_settings.get("image_preview_mode", PREVIEW_MODE_FIT)
 
 
@@ -142,6 +144,27 @@ class SettingsDialog(QDialog):
             self.original_zoom_mode_radio.setChecked(True)
         else:
             self.fit_mode_radio.setChecked(True)
+
+        # --- Thumbnail Right-Click Action Group ---
+        right_click_action_group = QGroupBox("サムネイル右クリック時の動作")
+        right_click_action_layout = QVBoxLayout()
+
+        self.metadata_action_radio = QRadioButton("メタデータを表示")
+        self.menu_action_radio = QRadioButton("メニューを表示 (メタデータ/場所を開く)")
+
+        self.right_click_action_button_group = QButtonGroup(self)
+        self.right_click_action_button_group.addButton(self.metadata_action_radio)
+        self.right_click_action_button_group.addButton(self.menu_action_radio)
+
+        if self.initial_right_click_action == RIGHT_CLICK_ACTION_MENU:
+            self.menu_action_radio.setChecked(True)
+        else: # Default to metadata
+            self.metadata_action_radio.setChecked(True)
+
+        right_click_action_layout.addWidget(self.metadata_action_radio)
+        right_click_action_layout.addWidget(self.menu_action_radio)
+        right_click_action_group.setLayout(right_click_action_layout)
+        main_layout.addWidget(right_click_action_group)
 
         # --- Dialog Buttons (OK, Cancel) ---
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -210,6 +233,13 @@ class SettingsDialog(QDialog):
         # Returns the size currently selected by the slider in this dialog session
         return self.current_selected_thumbnail_size
 
+    def get_selected_right_click_action(self):
+        if self.metadata_action_radio.isChecked():
+            return RIGHT_CLICK_ACTION_METADATA
+        elif self.menu_action_radio.isChecked():
+            return RIGHT_CLICK_ACTION_MENU
+        return self.initial_right_click_action # Fallback
+
 if __name__ == '__main__':
     import sys
     # Dummy data for testing
@@ -218,30 +248,43 @@ if __name__ == '__main__':
     current_preview_mode_test = PREVIEW_MODE_FIT
 
     # Create a dummy app_settings.json for testing if it doesn't exist
+    dummy_settings_for_test = {
+        "image_preview_mode": PREVIEW_MODE_ORIGINAL_ZOOM,
+        "thumbnail_size": 128,
+        THUMBNAIL_RIGHT_CLICK_ACTION: RIGHT_CLICK_ACTION_METADATA, # Add new setting for test
+        "other_setting": "test"
+    }
     if not os.path.exists(APP_SETTINGS_FILE):
         with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump({"image_preview_mode": PREVIEW_MODE_ORIGINAL_ZOOM, "thumbnail_size": 128, "other_setting": "test"}, f, indent=4)
+            json.dump(dummy_settings_for_test, f, indent=4)
     else: # Ensure it has expected keys for test
         with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
             temp_settings = json.load(f)
         temp_settings.setdefault("image_preview_mode", PREVIEW_MODE_FIT)
         temp_settings.setdefault("thumbnail_size", 128)
+        temp_settings.setdefault(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
         with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(temp_settings, f, indent=4)
 
 
     app = QApplication(sys.argv)
+    # Test with initial right click action
+    current_right_click_action_test = dummy_settings_for_test.get(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
     dialog = SettingsDialog(
         current_thumbnail_size=current_size_test,
         available_thumbnail_sizes=available_sizes_test,
-        current_preview_mode=current_preview_mode_test
+        current_preview_mode=current_preview_mode_test,
+        current_right_click_action=current_right_click_action_test
     )
     if dialog.exec():
         print("Settings accepted by dialog.")
         selected_size = dialog.get_selected_thumbnail_size()
         selected_mode = dialog.get_selected_preview_mode()
+        selected_right_click_action = dialog.get_selected_right_click_action()
         print(f"Selected thumbnail size from dialog: {selected_size}")
         print(f"Selected preview mode from dialog: {selected_mode}")
+        print(f"Selected right-click action from dialog: {selected_right_click_action}")
+
 
         # Simulate MainWindow saving the settings
         # In real app, MainWindow would show confirmation for thumbnail size change
@@ -254,6 +297,7 @@ if __name__ == '__main__':
         
         main_window_settings_to_save["thumbnail_size"] = selected_size
         main_window_settings_to_save["image_preview_mode"] = selected_mode
+        main_window_settings_to_save[THUMBNAIL_RIGHT_CLICK_ACTION] = selected_right_click_action
         
         with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(main_window_settings_to_save, f, indent=4)

@@ -37,7 +37,10 @@ logger = logging.getLogger(__name__)
 
 APP_SETTINGS_FILE = "app_settings.json"
 
-from .constants import METADATA_ROLE, SELECTION_ORDER_ROLE # MTIME_ROLE is removed
+from .constants import (
+    METADATA_ROLE, SELECTION_ORDER_ROLE,
+    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU
+)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -65,7 +68,8 @@ class MainWindow(QMainWindow):
         self.current_sort_key_index = 0 # 0: Filename, 1: Update Date
         self.current_sort_order = Qt.SortOrder.AscendingOrder # Qt.SortOrder.AscendingOrder or Qt.SortOrder.DescendingOrder
         self.load_start_time = None # For load time measurement
-        
+        self.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA # Default value
+
         # Load application-wide settings first
         self._load_app_settings()
 
@@ -242,9 +246,9 @@ class MainWindow(QMainWindow):
         self.thumbnail_view.setLayoutMode(QListView.LayoutMode.Batched) # Use QListView.LayoutMode
         self.thumbnail_view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel) # Enable pixel-based scrolling
         self.thumbnail_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection) # This should be fine as QAbstractItemView is imported
-        # self.thumbnail_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu) # No longer needed
-        # self.thumbnail_view.customContextMenuRequested.connect(self.show_thumbnail_context_menu) # No longer needed
-        self.thumbnail_view.metadata_requested.connect(self.handle_metadata_requested) # Connect new signal
+        self.thumbnail_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.thumbnail_view.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
+        # self.thumbnail_view.metadata_requested.connect(self.handle_metadata_requested) # Disconnected, replaced by customContextMenuRequested
         self.thumbnail_view.item_double_clicked.connect(self.handle_thumbnail_double_clicked) # Connect custom double click signal
         
         self.thumbnail_delegate = ThumbnailDelegate(self.thumbnail_view) # Create delegate instance
@@ -492,7 +496,8 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(
             current_thumbnail_size=self.current_thumbnail_size,
             available_thumbnail_sizes=self.available_sizes,
-            current_preview_mode=self.image_preview_mode, # Pass current preview mode
+            current_preview_mode=self.image_preview_mode,
+            current_right_click_action=self.thumbnail_right_click_action, # Pass current right-click action
             parent=self
         )
         if dialog.exec():
@@ -501,7 +506,12 @@ class MainWindow(QMainWindow):
             if self.image_preview_mode != new_preview_mode:
                 self.image_preview_mode = new_preview_mode
                 logger.info(f"画像表示モードが変更されました: {self.image_preview_mode}")
-                # MainWindow will save all settings together in _save_settings or here
+
+            # Thumbnail Right-Click Action handling
+            new_right_click_action = dialog.get_selected_right_click_action()
+            if self.thumbnail_right_click_action != new_right_click_action:
+                self.thumbnail_right_click_action = new_right_click_action
+                logger.info(f"サムネイル右クリック時の動作が変更されました: {self.thumbnail_right_click_action}")
 
             # Thumbnail size handling
             new_thumbnail_size = dialog.get_selected_thumbnail_size()
@@ -516,9 +526,10 @@ class MainWindow(QMainWindow):
                                  "画像の枚数によっては時間がかかる場合があります。")
                 msg_box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
                 msg_box.setDefaultButton(QMessageBox.StandardButton.Ok)
-                reply = msg_box.exec()
+                reply = msg_box.exec() # This returns an integer (the enum value)
 
-                if reply == QMessageBox.StandardButton.Ok:
+                # QMessageBox.StandardButton.Ok.value is typically 1024
+                if reply == 1024: # Explicitly compare with the integer value of Ok
                     logger.info(f"ユーザーがサムネイルサイズ変更を承認: {old_thumbnail_size}px -> {new_thumbnail_size}px")
                     if self.apply_thumbnail_size_change(new_thumbnail_size):
                         # self.current_thumbnail_size is updated within apply_thumbnail_size_change
@@ -545,6 +556,7 @@ class MainWindow(QMainWindow):
             current_app_settings = self._read_app_settings_file()
             current_app_settings["image_preview_mode"] = self.image_preview_mode
             current_app_settings["thumbnail_size"] = self.current_thumbnail_size # Save the confirmed size
+            current_app_settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.thumbnail_right_click_action # Add this line
             self._write_app_settings_file(current_app_settings)
             logger.info("設定ダイアログがOKで閉じられました。設定を保存しました。")
 
@@ -581,6 +593,9 @@ class MainWindow(QMainWindow):
         settings = self._read_app_settings_file()
         self.image_preview_mode = settings.get("image_preview_mode", PREVIEW_MODE_FIT)
         logger.info(f"読み込まれた画像表示モード (MainWindow): {self.image_preview_mode}")
+
+        self.thumbnail_right_click_action = settings.get(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
+        logger.info(f"読み込まれたサムネイル右クリック動作 (MainWindow): {self.thumbnail_right_click_action}")
         
         # Load thumbnail size
         loaded_thumbnail_size = settings.get("thumbnail_size", self.available_sizes[1]) # Default to 128 if not found
@@ -742,6 +757,7 @@ class MainWindow(QMainWindow):
         logger.info(f"再帰検索設定変更: {'ON' if checked else 'OFF'}. 次回フォルダ読み込み時に適用されます。")
 
     def apply_thumbnail_size_change(self, new_size):
+        # logger.debug(f"apply_thumbnail_size_change called with new_size={new_size}. self.is_loading_thumbnails={self.is_loading_thumbnails}, self.current_thumbnail_size={self.current_thumbnail_size}") # DEBUG LOG REMOVED
         if self.is_loading_thumbnails:
             logger.info("現在サムネイル読み込み中のため、サイズ変更はスキップされました。")
             return False # Indicate that the change was not applied
@@ -1520,8 +1536,9 @@ class MainWindow(QMainWindow):
         # Update the settings MainWindow is responsible for
         settings["last_folder_path"] = self.current_folder_path
         settings["recursive_search"] = self.recursive_search_enabled
-        settings["image_preview_mode"] = self.image_preview_mode 
+        settings["image_preview_mode"] = self.image_preview_mode
         settings["thumbnail_size"] = self.current_thumbnail_size # Ensure this is also saved
+        settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.thumbnail_right_click_action
         settings["sort_key_index"] = self.current_sort_key_index
         settings["sort_order"] = self.current_sort_order.value # Store enum's integer value
 
@@ -1745,3 +1762,64 @@ class MainWindow(QMainWindow):
 
         logger.info("アプリケーションを終了します。")
         super().closeEvent(event)
+
+    def _show_thumbnail_context_menu(self, pos):
+        proxy_index = self.thumbnail_view.indexAt(pos)
+        if not proxy_index.isValid():
+            return
+
+        if self.thumbnail_right_click_action == RIGHT_CLICK_ACTION_METADATA:
+            self.handle_metadata_requested(proxy_index)
+        elif self.thumbnail_right_click_action == RIGHT_CLICK_ACTION_MENU:
+            menu = QMenu(self)
+            
+            metadata_action = QAction("メタデータを表示", self)
+            metadata_action.triggered.connect(lambda: self.handle_metadata_requested(proxy_index))
+            menu.addAction(metadata_action)
+
+            open_location_action = QAction("ファイルの場所を開く", self)
+            open_location_action.triggered.connect(lambda: self._open_file_location_for_item(proxy_index))
+            menu.addAction(open_location_action)
+            
+            menu.exec(self.thumbnail_view.viewport().mapToGlobal(pos))
+        else:
+            logger.warning(f"不明なサムネイル右クリック動作設定: {self.thumbnail_right_click_action}")
+            # フォールバックとしてメタデータを表示するなどの処理も検討可能
+            self.handle_metadata_requested(proxy_index)
+
+    def _open_file_location_for_item(self, proxy_index):
+        if not proxy_index.isValid():
+            logger.warning("ファイルの場所を開く操作が、無効なインデックスで呼び出されました。")
+            return
+
+        source_index = self.filter_proxy_model.mapToSource(proxy_index)
+        item = self.source_thumbnail_model.itemFromIndex(source_index)
+
+        if not item:
+            logger.warning(f"ファイルの場所を開く操作: インデックスからアイテムを取得できませんでした (proxy: {proxy_index.row()},{proxy_index.column()}; source: {source_index.row()},{source_index.column()}).")
+            return
+
+        file_path = item.data(Qt.ItemDataRole.UserRole)
+        if not file_path:
+            logger.warning("ファイルの場所を開く操作: アイテムにファイルパスが関連付けられていません。")
+            QMessageBox.warning(self, "エラー", "アイテムにファイルパスが関連付けられていません。")
+            return
+
+        dir_path = os.path.dirname(file_path)
+        if not os.path.isdir(dir_path):
+            logger.warning(f"ファイルの場所を開く操作: ディレクトリ '{dir_path}' が見つかりません (元ファイル: {file_path})。")
+            QMessageBox.warning(self, "エラー", f"ディレクトリ '{dir_path}' が見つかりません。")
+            return
+        
+        try:
+            logger.info(f"エクスプローラで '{dir_path}' を開きます。")
+            os.startfile(dir_path)
+        except AttributeError:
+            logger.error("os.startfile が現在のプラットフォームでサポートされていません。")
+            QMessageBox.critical(self, "エラー", "このプラットフォームではファイルの場所を開く機能はサポートされていません。")
+        except FileNotFoundError: # Should be caught by os.path.isdir, but as a safeguard
+            logger.error(f"os.startfile でディレクトリ '{dir_path}' が見つかりませんでした。")
+            QMessageBox.critical(self, "エラー", f"ディレクトリ '{dir_path}' が見つかりませんでした。")
+        except Exception as e:
+            logger.error(f"ディレクトリ '{dir_path}' を開く際に予期せぬエラーが発生しました: {e}", exc_info=True)
+            QMessageBox.critical(self, "エラー", f"ディレクトリを開く際にエラーが発生しました:\n{e}")

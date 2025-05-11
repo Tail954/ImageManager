@@ -234,7 +234,7 @@ class FullImageDialog(QDialog):
     def _load_and_display_image(self):
         if not self.image_path:
             logger.error("Image path is None, cannot load.")
-            self.image_label.setText("画像パスが指定されていません。")
+            # self.image_label.setText("画像パスが指定されていません。") # Removed: Let _update_image_display handle this
             self.pixmap = QPixmap()
             self._update_image_display() # Ensure display is cleared
             self._update_navigation_buttons()
@@ -260,15 +260,39 @@ class FullImageDialog(QDialog):
         self._update_navigation_buttons() 
 
     def _update_image_display(self):
-        if self.pixmap.isNull() or self.image_path is None: # Added check for self.image_path
-            self.image_label.clear() 
-            if self.image_path is None and self.all_image_paths: # List might exist but current index was bad
-                 self.image_label.setText("表示する画像が選択されていません。")
-            elif not self.all_image_paths:
-                 self.image_label.setText("表示できる画像がありません。")
-            # If pixmap isNull but image_path was valid, load error text is already set by _load_and_display_image
+        if self.pixmap.isNull():
+            # Pixmap is null. This means image loading failed, or there's no image to display.
+            # _load_and_display_image should have already set an appropriate text on self.image_label
+            # if a specific error occurred (e.g., file not found, load failed).
+            # Here, we ensure any old pixmap is cleared.
+            # If no text was set by the loader (e.g., initial state with no images), set a generic one.
+            # Preserve the text that might have been set by _load_and_display_image or other methods.
+            current_message_on_label = self.image_label.text()
+            
+            self.image_label.setPixmap(QPixmap()) # Clear previous pixmap (this might also clear the text on the label)
+
+            # If a specific message was already on the label (e.g., from _load_and_display_image), restore it.
+            if current_message_on_label:
+                self.image_label.setText(current_message_on_label)
+            else:
+                # No specific message was on the label when _update_image_display was called, or it was empty.
+                # This might happen if the message set by _load_and_display_image was lost.
+                # Try to reconstruct a specific error message based on self.image_path.
+                if self.image_path and not os.path.exists(self.image_path):
+                    self.image_label.setText(f"指定された画像ファイルが見つかりません:\n{os.path.basename(self.image_path)}")
+                elif self.image_path and os.path.exists(self.image_path): # Exists but pixmap isNull, implies load failure
+                    self.image_label.setText(f"画像の読み込みに失敗しました:\n{os.path.basename(self.image_path)}")
+                # Fallback to more generic messages if image_path doesn't explain the null pixmap
+                elif self.image_path is None and self.all_image_paths: # List exists but current index was bad
+                     self.image_label.setText("表示する画像が選択されていません。")
+                elif not self.all_image_paths: # No images at all
+                     self.image_label.setText("表示できる画像がありません。")
+                else: # Ultimate fallback
+                    self.image_label.setText("画像の表示に失敗しました。")
             return
 
+        # Pixmap is valid, clear any previous text and display the image
+        self.image_label.setText("") # Clear any error/info text before setting pixmap
         if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM:
             scaled_pixmap = self.pixmap.scaled(
                 int(self.pixmap.width() * self.scale_factor),
