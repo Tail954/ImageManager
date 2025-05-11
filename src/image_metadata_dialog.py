@@ -3,16 +3,24 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton, QApplication, QTabWidget, QWidget, QSizePolicy
 )
 from PyQt6.QtCore import Qt
+import os # Added import
 from .tag_text_browser import TagTextBrowser # Import the new TagTextBrowser
 
 logger = logging.getLogger(__name__)
 
 class ImageMetadataDialog(QDialog):
+    def _update_title(self):
+        if self.item_file_path_for_debug and os.path.basename(self.item_file_path_for_debug): # Ensure basename is not empty
+            self.setWindowTitle(f"画像メタデータ: {os.path.basename(self.item_file_path_for_debug)}")
+        else:
+            self.setWindowTitle("画像メタデータ")
+
     def __init__(self, metadata_dict, parent=None, item_file_path_for_debug=None):
         super().__init__(parent)
-        self.setWindowTitle("画像メタデータ")
+        # self.setWindowTitle("画像メタデータ") # Title will be set by _update_title
         self.item_file_path_for_debug = item_file_path_for_debug
         self.metadata_dict = metadata_dict if isinstance(metadata_dict, dict) else {}
+        self._update_title() # Set initial title correctly
 
         # Main layout for the dialog
         main_dialog_layout = QVBoxLayout(self)
@@ -239,8 +247,9 @@ class ImageMetadataDialog(QDialog):
 
 
     def update_metadata(self, metadata_dict, item_file_path_for_debug=None):
-        self.item_file_path_for_debug = item_file_path_for_debug
+        self.item_file_path_for_debug = item_file_path_for_debug # Update path
         self.metadata_dict = metadata_dict if isinstance(metadata_dict, dict) else {}
+        self._update_title() # Update title with new path
         
         self._populate_fields() # Re-populate all fields with new metadata
         self.handle_clear_selection() # Clear any existing selections

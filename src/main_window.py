@@ -2,13 +2,14 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, QDialog, # Added QListView and QDialog
-    QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog # Added QProgressDialog
+    QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox # Added QComboBox
 )
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
 from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QDirIterator, QVariant, QSortFilterProxyModel
 import os # For path operations
 from pathlib import Path # For path operations
 import json # For settings
+import time # For load time measurement
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
 
 from .thumbnail_loader import ThumbnailLoaderThread
@@ -20,6 +21,7 @@ from .file_operations import FileOperations # Import FileOperations
 from .renamed_files_dialog import RenamedFilesDialog # Import new dialog
 from .full_image_dialog import FullImageDialog # Import the new full image dialog
 from .settings_dialog import SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM # Import settings dialog and constants
+import send2trash # Import at module level
 
 # PillowのImageオブジェクトをQImageに変換するために必要
 import logging # Add logging import
@@ -35,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 APP_SETTINGS_FILE = "app_settings.json"
 
-from .constants import METADATA_ROLE, SELECTION_ORDER_ROLE # Import from constants
+from .constants import METADATA_ROLE, SELECTION_ORDER_ROLE # MTIME_ROLE is removed
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -60,9 +62,12 @@ class MainWindow(QMainWindow):
         self.metadata_dialog_last_geometry = None # To store the last geometry of the metadata dialog
         self.full_image_dialog_instance = None # To store the single instance of FullImageDialog
         self.image_preview_mode = PREVIEW_MODE_FIT # Default, will be overwritten by _load_app_settings
+        self.current_sort_key_index = 0 # 0: Filename, 1: Update Date
+        self.current_sort_order = Qt.SortOrder.AscendingOrder # Qt.SortOrder.AscendingOrder or Qt.SortOrder.DescendingOrder
+        self.load_start_time = None # For load time measurement
         
         # Load application-wide settings first
-        self._load_app_settings() 
+        self._load_app_settings()
 
         # Menu Bar
         self._create_menu_bar()
@@ -105,6 +110,32 @@ class MainWindow(QMainWindow):
         self.recursive_toggle_button.setChecked(self.recursive_search_enabled)
         self.recursive_toggle_button.toggled.connect(self.handle_recursive_search_toggled)
         left_layout.addWidget(self.recursive_toggle_button)
+
+        # --- Sort Options UI ---
+        sort_options_group_box = QFrame()
+        sort_options_group_box.setFrameShape(QFrame.Shape.StyledPanel)
+        sort_options_layout = QVBoxLayout(sort_options_group_box)
+        sort_options_layout.setContentsMargins(5,5,5,5)
+        
+        sort_controls_layout = QHBoxLayout()
+        sort_controls_layout.addWidget(QLabel("ソート:"))
+        
+        self.sort_key_combo = QComboBox()
+        self.sort_key_combo.addItems(["ファイル名", "更新日時"])
+        self.sort_key_combo.currentIndexChanged.connect(self._apply_sort_and_filter_update)
+        sort_controls_layout.addWidget(self.sort_key_combo)
+        
+        self.sort_order_button = QPushButton() 
+        if self.current_sort_order == Qt.SortOrder.AscendingOrder: # Set initial text based on default
+            self.sort_order_button.setText("昇順 ▲")
+        else:
+            self.sort_order_button.setText("降順 ▼")
+        self.sort_order_button.clicked.connect(self._toggle_sort_order_and_apply)
+        sort_controls_layout.addWidget(self.sort_order_button)
+        
+        sort_options_layout.addLayout(sort_controls_layout)
+        left_layout.addWidget(sort_options_group_box)
+        # --- End Sort Options UI ---
 
         # --- Filter UI Elements ---
         filter_group_box = QFrame() # Using QFrame for visual grouping, could be QGroupBox
@@ -243,6 +274,197 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter)
 
         self._load_settings() # Load UI specific settings after all UI elements are initialized
+        self._apply_sort_and_filter_update() # Apply initial sort based on loaded or default settings
+
+
+    def _perform_sort(self):
+        """
+        Sorts the items in the source_thumbnail_model based on the current
+        sort key and order.
+        """
+        if not self.source_thumbnail_model:
+            logger.warning("_perform_sort called but source_thumbnail_model is None.")
+            return
+
+        num_items = self.source_thumbnail_model.rowCount()
+        if num_items == 0:
+            logger.debug("_perform_sort: No items in model to sort.")
+            return
+
+        logger.info(f"Performing sort. Key: {self.current_sort_key_index}, Order: {self.current_sort_order}. Items: {num_items}")
+
+        # Disable sort UI during sort operation
+        self.sort_key_combo.setEnabled(False)
+        self.sort_order_button.setEnabled(False)
+        QApplication.processEvents() # Ensure UI updates
+        sort_start_time = time.time()
+
+        try:
+            # 1. Get all item data from the model
+            item_data_list = []
+            for i in range(num_items):
+                item = self.source_thumbnail_model.item(i)
+                if item:
+                    file_path = item.data(Qt.ItemDataRole.UserRole)
+                    icon = item.icon()
+                    text = item.text()
+                    metadata = item.data(METADATA_ROLE)
+                    # mtime_cached = item.data(MTIME_ROLE) # Get cached mtime # MTIME_ROLE removed
+                    item_data_list.append({
+                        "file_path": file_path,
+                        "icon": icon,
+                        "text": text,
+                        "metadata": metadata,
+                        # "mtime_cached": mtime_cached # MTIME_ROLE removed
+                    })
+
+            # 2. Define sort key function based on extracted data
+            def sort_key_func(data_dict):
+                file_path = data_dict["file_path"]
+                if file_path is None: # Should ideally not happen if items are valid
+                    return "" if self.current_sort_key_index == 0 else 0
+
+                if self.current_sort_key_index == 0:  # Filename
+                    return os.path.basename(file_path).lower()
+                elif self.current_sort_key_index == 1:  # Update Date
+                    # mtime = data_dict.get("mtime_cached") # MTIME_ROLE removed
+                    # if mtime is None: # MTIME_ROLE removed
+                    try:
+                        # logger.warning(f"MTIME_ROLE data not found for {file_path} in sort_key_func (mtime_cached was None), fetching from disk.") # MTIME_ROLE removed
+                        return os.path.getmtime(file_path)
+                    except FileNotFoundError:
+                        logger.warning(f"File not found for mtime (fallback): {file_path}, using 0 for sort.")
+                        return 0.0 
+                    except Exception as e:
+                        logger.error(f"Error getting mtime for {file_path} (fallback): {e}. Using 0 for sort.")
+                        return 0.0
+                    # return float(mtime) if mtime is not None else 0.0 # MTIME_ROLE removed
+                return "" 
+
+            # 3. Sort the list of item data
+            item_data_list.sort(key=sort_key_func, reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder))
+            
+            # 4. Rebuild the model with new items created from sorted data
+            self.source_thumbnail_model.beginResetModel()
+            self.source_thumbnail_model.clear() 
+            for data_dict in item_data_list:
+                new_item = QStandardItem()
+                new_item.setIcon(data_dict["icon"])
+                new_item.setText(data_dict["text"])
+                new_item.setData(data_dict["file_path"], Qt.ItemDataRole.UserRole)
+                new_item.setData(data_dict["metadata"], METADATA_ROLE)
+                # new_item.setData(data_dict.get("mtime_cached"), MTIME_ROLE) # MTIME_ROLE removed
+                new_item.setEditable(False) 
+                self.source_thumbnail_model.appendRow(new_item)
+            self.source_thumbnail_model.endResetModel()
+            logger.info(f"Sort performed and model updated. Items: {self.source_thumbnail_model.rowCount()}")
+
+        except Exception as e:
+            logger.error(f"Error during sort operation: {e}", exc_info=True)
+        finally:
+            # Re-enable sort UI after sort operation
+            self.sort_key_combo.setEnabled(True)
+            self.sort_order_button.setEnabled(True)
+            sort_end_time = time.time()
+            logger.info(f"Sort operation took: {sort_end_time - sort_start_time:.4f} seconds.")
+
+
+    def _toggle_sort_order_and_apply(self):
+        logger.debug(f"Before toggle: self.current_sort_order = {self.current_sort_order}")
+        if self.current_sort_order == Qt.SortOrder.AscendingOrder:
+            self.current_sort_order = Qt.SortOrder.DescendingOrder
+            new_button_text = "降順 ▼"
+        else:
+            self.current_sort_order = Qt.SortOrder.AscendingOrder
+            new_button_text = "昇順 ▲"
+        
+        self.sort_order_button.setText(new_button_text)
+        logger.debug(f"After toggle: self.current_sort_order = {self.current_sort_order}, Button text set to: {new_button_text}")
+        self._apply_sort_and_filter_update()
+
+    def _apply_sort_and_filter_update(self):
+        # self.current_sort_key_index is updated by sort_key_combo.currentIndexChanged directly
+        # self.current_sort_order is updated by _toggle_sort_order_and_apply
+        # So, when this method is called, these should already reflect the desired state.
+        
+        # Ensure current_sort_key_index is up-to-date from the combo box,
+        # as this method can also be called by sort_key_combo.currentIndexChanged
+        self.current_sort_key_index = self.sort_key_combo.currentIndex()
+
+        logger.info(f"Applying sort and filter. Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
+        
+        # Perform sort on the source model directly
+        self._perform_sort()
+
+        # After sorting the source model, the filter proxy model will automatically reflect changes
+        # if its source has been reset. If filters are active, they will be re-applied.
+        # We might still want to explicitly call invalidateFilter on the proxy if only sort changed
+        # and we want to ensure the view updates correctly with existing filters.
+        # However, beginResetModel/endResetModel on source should be sufficient.
+
+        # For now, let's assume the filter proxy model handles updates correctly after source reset.
+        # If filtering needs to be explicitly re-triggered after a sort, we can add:
+        # if self.filter_proxy_model:
+        #     self.filter_proxy_model.invalidateFilter()
+
+        # The old QSortFilterProxyModel specific calls are removed:
+        # if self.filter_proxy_model:
+            # logger.debug(f"Calling filter_proxy_model.set_sort_criteria({self.current_sort_key_index}, {self.current_sort_order})")
+            # self.filter_proxy_model.set_sort_criteria(self.current_sort_key_index, self.current_sort_order)
+            
+            # Use the proxy model's current sort column, which might be set or defaulted.
+            # Our custom lessThan primarily uses self.sort_key_index and self.sort_order from set_sort_criteria.
+            # sort_column_to_use = self.filter_proxy_model.sortColumn() # Get current sort column from proxy
+            # if sort_column_to_use == -1: # If no sort column is set, default to 0
+            #     sort_column_to_use = 0
+            
+            # Log the state of the proxy model's sort properties BEFORE calling sort
+            # logger.debug(f"ProxyModel state before set_sort_criteria: source_rows={self.source_thumbnail_model.rowCount()}, proxy_rows={self.filter_proxy_model.rowCount()}, sortColumn={self.filter_proxy_model.sortColumn()}, sortOrder={self.filter_proxy_model.sortOrder()}, dynamicSortFilter={self.filter_proxy_model.dynamicSortFilter()}, sortRole={self.filter_proxy_model.sortRole()}")
+
+            # self.filter_proxy_model.set_sort_criteria(self.current_sort_key_index, self.current_sort_order) # This is already called before this block
+            # logger.debug(f"ProxyModel state after set_sort_criteria: source_rows={self.source_thumbnail_model.rowCount()}, proxy_rows={self.filter_proxy_model.rowCount()}")
+
+            # Explicitly set sort column and order on the proxy model itself
+            # logger.debug(f"Explicitly setting proxy sortColumn to {sort_column_to_use} and sortOrder to {self.current_sort_order}")
+            # self.filter_proxy_model.setSortColumn(sort_column_to_use) # Removed: QSortFilterProxyModel does not have this public setter
+            # self.filter_proxy_model.setSortOrder(self.current_sort_order) # Removed: QSortFilterProxyModel does not have this public setter
+
+            # logger.debug(f"Calling filter_proxy_model.apply_internal_sort({sort_column_to_use}, {self.current_sort_order})")
+            
+            # self.filter_proxy_model.beginResetModel() # Removed: Moved to overridden sort method in proxy model
+            # self.filter_proxy_model.apply_internal_sort(sort_column_to_use, self.current_sort_order) 
+            # self.filter_proxy_model.endResetModel() # Removed: Moved to overridden sort method in proxy model
+            
+            # logger.debug(f"ProxyModel state after apply_internal_sort: source_rows={self.source_thumbnail_model.rowCount()}, proxy_rows={self.filter_proxy_model.rowCount()}, sortColumn={self.filter_proxy_model.sortColumn()}, sortOrder={self.filter_proxy_model.sortOrder()}")
+            
+            # logger.info(f"Proxy model sort triggered. Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
+
+            # --- Add debug log for first few items after sort ---
+            # proxy_row_count = self.filter_proxy_model.rowCount()
+            # logger.debug(f"Proxy model row count after sort: {proxy_row_count}")
+            # if proxy_row_count > 0:
+            #     num_items_to_log = min(3, proxy_row_count)
+            #     logger.debug(f"First {num_items_to_log} items in proxy model after sort:")
+            #     for i in range(num_items_to_log):
+            #         proxy_idx = self.filter_proxy_model.index(i, 0)
+            #         if proxy_idx.isValid():
+            #             source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
+            #             # It's safer to get data directly from source model if item might be complex
+            #             file_path = self.source_thumbnail_model.data(self.source_thumbnail_model.index(source_idx.row(), 0), Qt.ItemDataRole.UserRole)
+            #             logger.debug(f"  ProxyRow {i}: FilePath = {os.path.basename(file_path if file_path else 'N/A')}")
+            #         else:
+            #             logger.debug(f"  ProxyRow {i}: Invalid proxy index.")
+            # else:
+            #     logger.debug("Proxy model is empty after sort (no items to log).")
+            # --- End debug log ---
+        # else:
+            # logger.warning("Filter proxy model not available for sorting yet.")
+        
+        # After sorting, it's good practice to re-apply filters if they are active,
+        # or at least ensure the view is updated.
+        # self.apply_filters(preserve_selection=True) # Re-apply filters to ensure view consistency
+
+    # Removed _simple_debug_test_slot and the test_debug_button creation
 
     def _create_menu_bar(self):
         menu_bar = self.menuBar()
@@ -392,6 +614,9 @@ class MainWindow(QMainWindow):
 
         logger.info(f"フォルダツリーを更新しました。表示ルート: {root_display_path}, 選択中: {folder_path}")
         self.load_thumbnails_from_folder(folder_path) # Load images from the user-selected folder
+        # Attempt to clean empty subfolders after loading thumbnails for the folder selected via button
+        if os.path.isdir(folder_path): # Ensure path is still a valid directory
+            self._try_delete_empty_subfolders(folder_path)
 
     def on_folder_tree_clicked(self, index):
         path = self.file_system_model.filePath(index)
@@ -399,6 +624,9 @@ class MainWindow(QMainWindow):
             logger.info(f"フォルダがクリックされました: {path}")
             self.current_folder_path = path
             self.load_thumbnails_from_folder(path)
+            # Attempt to clean empty subfolders after loading thumbnails for the selected folder
+            if os.path.isdir(path): # Ensure path is still a valid directory
+                self._try_delete_empty_subfolders(path)
         else:
             logger.debug(f"ファイルがクリックされました: {path}")
 
@@ -409,6 +637,7 @@ class MainWindow(QMainWindow):
             return
 
         logger.info(f"{folder_path} からサムネイルを読み込みます。")
+        self.load_start_time = time.time() # Record start time
         image_files = []
         try:
             search_flags = QDirIterator.IteratorFlag.Subdirectories if self.recursive_search_enabled else QDirIterator.IteratorFlag.NoIteratorFlags
@@ -432,6 +661,8 @@ class MainWindow(QMainWindow):
             self.generation_info_filter_edit.setEnabled(False)
             self.and_radio_button.setEnabled(False)
             self.or_radio_button.setEnabled(False)
+            self.sort_key_combo.setEnabled(False) # Disable sort UI
+            self.sort_order_button.setEnabled(False) # Disable sort UI
 
             self.source_thumbnail_model.clear() # Clear the source model
             self.selected_file_paths.clear() # Clear selection list
@@ -444,6 +675,7 @@ class MainWindow(QMainWindow):
             placeholder_pixmap = QPixmap(self.current_thumbnail_size, self.current_thumbnail_size)
             placeholder_pixmap.fill(Qt.GlobalColor.transparent)
             placeholder_icon = QIcon(placeholder_pixmap)
+            items_for_thread = [] # Collect items to pass to the thread
 
             for f_path in image_files:
                 item = QStandardItem()
@@ -453,6 +685,7 @@ class MainWindow(QMainWindow):
                 item.setData(f_path, Qt.ItemDataRole.UserRole) # Store file path
                 # Metadata will be added in update_thumbnail_item via METADATA_ROLE
                 self.source_thumbnail_model.appendRow(item)
+                items_for_thread.append(item) # Add to list
 
         except Exception as e:
             logger.error(f"サムネイル読み込み準備中にエラー: {e}", exc_info=True)
@@ -466,7 +699,7 @@ class MainWindow(QMainWindow):
             else:
                 logger.info("既存スレッドが正常に終了しました。")
 
-        self.thumbnail_loader_thread = ThumbnailLoaderThread(image_files, self.current_thumbnail_size)
+        self.thumbnail_loader_thread = ThumbnailLoaderThread(image_files, items_for_thread, self.current_thumbnail_size) # Pass items_for_thread
         self.thumbnail_loader_thread.thumbnailLoaded.connect(self.update_thumbnail_item)
         self.thumbnail_loader_thread.progressUpdated.connect(self.update_progress_bar)
         self.thumbnail_loader_thread.finished.connect(self.on_thumbnail_loading_finished)
@@ -484,6 +717,8 @@ class MainWindow(QMainWindow):
             self.positive_prompt_filter_edit.setEnabled(True)
             self.negative_prompt_filter_edit.setEnabled(True)
             self.generation_info_filter_edit.setEnabled(True)
+            self.sort_key_combo.setEnabled(True) # Re-enable sort UI
+            self.sort_order_button.setEnabled(True) # Re-enable sort UI
 
     def handle_recursive_search_toggled(self, checked):
         self.recursive_search_enabled = checked
@@ -519,41 +754,37 @@ class MainWindow(QMainWindow):
     def update_progress_bar(self, processed_count, total_files):
         self.statusBar.showMessage(f"サムネイル読み込み中... {processed_count}/{total_files}")
 
-    def update_thumbnail_item(self, file_path, q_image, metadata): # Added metadata parameter
+    def update_thumbnail_item(self, item, q_image, metadata): # Removed mtime parameter
         if ImageQt is None: return
+        if not item: # Should not happen if thread sends valid items
+            logger.error("update_thumbnail_item received a None item.")
+            return
+
+        file_path = item.data(Qt.ItemDataRole.UserRole) # Get file_path from item for cache key
 
         pixmap = None
         if q_image: # q_image can be None if loading failed in thread
             pixmap = QPixmap.fromImage(q_image)
         
-        # Iterate over the source model to find the item
-        for row in range(self.source_thumbnail_model.rowCount()):
-            item = self.source_thumbnail_model.item(row)
-            if item and item.data(Qt.ItemDataRole.UserRole) == file_path:
-                if pixmap:
-                    # logger.debug(f"update_thumbnail_item for {file_path}: q_image isNull={q_image.isNull()}, q_image.size={q_image.size() if q_image else 'N/A'}")
-                    # logger.debug(f"update_thumbnail_item for {file_path}: pixmap isNull={pixmap.isNull()}, pixmap.size={pixmap.size() if pixmap else 'N/A'}")
-                    temp_icon = QIcon(pixmap)
-                    # logger.debug(f"update_thumbnail_item for {file_path}: temp_icon isNull={temp_icon.isNull()}, availableSizes={temp_icon.availableSizes()}, actualSize for 128x128={temp_icon.actualSize(QSize(128,128)) if not temp_icon.isNull() else 'N/A'}")
-                    # Attempt to keep a reference to the icon object by storing it in a custom role
-                    # This might prevent the QIcon from being garbage collected if setIcon doesn't take ownership strongly enough.
-                    # item.setData(temp_icon, Qt.ItemDataRole.UserRole + 100) # Custom role for icon reference - This was a debug step, removing.
-                    item.setIcon(temp_icon)
-                else:
-                    logger.warning(f"update_thumbnail_item for {file_path}: pixmap is None (q_image was None or conversion failed). Icon not set.")
+        if pixmap:
+            temp_icon = QIcon(pixmap)
+            item.setIcon(temp_icon)
+        else:
+            if file_path: # Log with file_path if available
+                logger.warning(f"update_thumbnail_item for {file_path}: pixmap is None (q_image was None or conversion failed). Icon not set.")
+            else: # Fallback log if file_path couldn't be retrieved
+                logger.warning(f"update_thumbnail_item for an item (path unknown): pixmap is None. Icon not set.")
+        
+        # Store metadata in cache (if file_path is valid) and item
+        if file_path:
+            self.metadata_cache[file_path] = metadata
+        else:
+            logger.error("Cannot cache metadata as file_path is missing from item in update_thumbnail_item.")
+            
+        item.setData(metadata, METADATA_ROLE) # Store metadata dict directly
+        # item.setData(mtime, MTIME_ROLE) # Store mtime # MTIME_ROLE removed
                 
-                # Store metadata in cache and item
-                self.metadata_cache[file_path] = metadata
-                item.setData(metadata, METADATA_ROLE) # Store metadata dict directly
-                
-                # # --- Added Debug Log ---
-                # normalized_image_path_log = file_path.replace("\\", "/")
-                # target_file_for_debug_log_raw = r"G:\test\00005-4187066497.jpg"
-                # normalized_target_path_log = target_file_for_debug_log_raw.replace("\\", "/")
-                # if normalized_image_path_log == normalized_target_path_log:
-                    # logger.info(f"DEBUG_TARGET_MAIN_WINDOW_UPDATE: Metadata set for item {file_path}: {metadata}")
-                # # --- End Debug Log ---
-                break
+        # # --- End Debug Log ---
 
     def on_thumbnail_loading_finished(self):
         logger.info("サムネイルの非同期読み込みが完了しました。")
@@ -569,6 +800,8 @@ class MainWindow(QMainWindow):
         self.generation_info_filter_edit.setEnabled(True)
         self.and_radio_button.setEnabled(True)
         self.or_radio_button.setEnabled(True)
+        self.sort_key_combo.setEnabled(True) # Re-enable sort UI
+        self.sort_order_button.setEnabled(True) # Re-enable sort UI
 
         if self.filter_proxy_model: # Apply initial filter if model exists
             self.apply_filters(preserve_selection=True) # Preserve selection after loading
@@ -576,6 +809,11 @@ class MainWindow(QMainWindow):
         if self.thumbnail_loader_thread:
             self.thumbnail_loader_thread.deleteLater()
             self.thumbnail_loader_thread = None
+
+        if self.load_start_time:
+            elapsed_time = time.time() - self.load_start_time
+            logger.info(f"Total thumbnail loading time for {self.current_folder_path}: {elapsed_time:.2f} seconds.")
+            self.load_start_time = None # Reset for next load
 
     def handle_thumbnail_selection_changed(self, selected, deselected):
         if self.is_copy_mode:
@@ -959,15 +1197,26 @@ class MainWindow(QMainWindow):
         # For now, let the finish/error handlers manage its final state.
 
     def _handle_file_op_progress(self, processed_count, total_count):
-        # self.statusBar.showMessage(f"処理中: {processed_count}/{total_count} ファイル...", 0) # ProgressDialog shows this
-        if self.progress_dialog: # Check if the dialog still exists
-            self.progress_dialog.setMaximum(total_count) # Ensure total is up-to-date
-            self.progress_dialog.setValue(processed_count)
-            # QProgressDialog's label text can be set, or it might auto-update based on its properties.
-            # Explicitly setting it ensures our desired format.
-            self.progress_dialog.setLabelText(f"処理中: {processed_count}/{total_count} ファイル...")
+        dialog = self.progress_dialog # Assign to a local variable at the start of the slot
+        if dialog:
+            # Check if the dialog was cancelled by the user.
+            if dialog.wasCanceled():
+                logger.debug(f"Progress update ({processed_count}/{total_count}) received but progress_dialog was canceled by user.")
+                return
+
+            try:
+                # Use the local 'dialog' variable for all operations
+                dialog.setMaximum(total_count)
+                dialog.setValue(processed_count)
+                dialog.setLabelText(f"処理中: {processed_count}/{total_count} ファイル...")
+            except RuntimeError as e: # Catches errors like "wrapped C/C++ object of type QProgressDialog has been deleted"
+                logger.warning(f"Error updating progress dialog (likely already closed or invalid): {e}")
+                # If a RuntimeError occurs, it means the Qt object is gone.
+                # self.progress_dialog might be cleared by another slot (_handle_file_op_finished/_error)
+                # so we don't strictly need to set self.progress_dialog = None here,
+                # but it's good to be aware the 'dialog' reference is now stale.
         else:
-            logger.debug(f"Progress update ({processed_count}/{total_count}) received but progress_dialog is None.")
+            logger.debug(f"Progress update ({processed_count}/{total_count}) received but self.progress_dialog was already None.")
 
 
     def _handle_file_op_error(self, error_message):
@@ -1018,25 +1267,50 @@ class MainWindow(QMainWindow):
             successfully_moved_src_paths = result.get('successfully_moved_src_paths', [])
             if moved_count > 0 and successfully_moved_src_paths:
                  logger.info(f"Successfully moved {moved_count} files. Updating model.")
+                 
+                 # Build a path-to-item map for quick lookup
+                 path_to_item_map = {}
+                 for row in range(self.source_thumbnail_model.rowCount()):
+                     item = self.source_thumbnail_model.item(row)
+                     if item:
+                         item_path = item.data(Qt.ItemDataRole.UserRole)
+                         if item_path:
+                             path_to_item_map[item_path] = item
+                 
                  items_to_remove_from_model = []
                  for path_to_remove in successfully_moved_src_paths:
-                     for row in range(self.source_thumbnail_model.rowCount()):
-                         item = self.source_thumbnail_model.item(row)
-                         if item and item.data(Qt.ItemDataRole.UserRole) == path_to_remove:
-                             items_to_remove_from_model.append(item)
-                             break # Found item for this path, move to next path
+                     item_to_remove = path_to_item_map.get(path_to_remove)
+                     if item_to_remove:
+                         items_to_remove_from_model.append(item_to_remove)
+                     else:
+                         # This case should ideally not happen if successfully_moved_src_paths
+                         # are accurate and were part of the model.
+                         logger.warning(f"Moved path {path_to_remove} not found in source model's path_to_item_map for removal.")
                  
                  # Remove items in reverse order of their rows to maintain index validity
-                 items_to_remove_from_model.sort(key=lambda x: x.row(), reverse=True)
-                 for item in items_to_remove_from_model:
-                     self.source_thumbnail_model.removeRow(item.row())
+                 # It's important that items_to_remove_from_model contains valid QStandardItem instances
+                 # that are still part of the source_thumbnail_model.
+                 items_to_remove_from_model.sort(key=lambda x: x.row() if x and x.model() == self.source_thumbnail_model else -1, reverse=True)
                  
+                 for item_to_remove_instance in items_to_remove_from_model:
+                     if item_to_remove_instance and item_to_remove_instance.model() == self.source_thumbnail_model:
+                         self.source_thumbnail_model.removeRow(item_to_remove_instance.row())
+                     elif item_to_remove_instance:
+                         logger.warning(f"Item for path {item_to_remove_instance.data(Qt.ItemDataRole.UserRole)} is no longer in the expected model or is invalid, skipping removal.")
+                     # If item_to_remove_instance was None (from path_to_item_map.get()), it's already handled by not being in the list effectively.
+
                  # Clear selected_file_paths as they have been processed (moved)
                  # Only clear those that were successfully moved.
                  # For simplicity, if an operation was started, we clear the whole list,
                  # assuming user will re-select if some failed.
                  # A more precise way would be to remove only successful paths from selected_file_paths.
                  self.selected_file_paths.clear()
+            
+            # After a move operation, the current folder view might be stale or show less items.
+            # It's not strictly necessary to reload the entire folder view,
+            # as items are removed. However, if the move was *within* the current view's subfolders,
+            # a refresh of the specific destination in the tree might be desired by user,
+            # but that's a more complex UI enhancement. For now, removing items is the main goal.
 
 
             if renamed_files:
@@ -1152,37 +1426,65 @@ class MainWindow(QMainWindow):
             
             if copied_count > 0:
                 self.statusBar.showMessage(f"{copied_count}個のファイルをコピーしました。", 5000)
+                # Specific cleanup for copy_selection_order is now handled below
+                # if status is 'completed' and no errors.
+            elif not errors:
+                self.statusBar.showMessage("コピーするファイルがありませんでした、または処理が完了しました。", 3000)
+        
+        # General cleanup for completed operations without errors
+        if status == 'completed' and not errors:
+            self.deselect_all_thumbnails() # Single call to deselect
+
+            if operation_type == "copy": # Specific cleanup for copy mode after deselection
                 # Clear selection order data from items after successful copy
-                for item in self.copy_selection_order: # Iterate before clearing
-                    if item.data(SELECTION_ORDER_ROLE) is not None:
-                        item.setData(None, SELECTION_ORDER_ROLE)
-                        source_idx = self.source_thumbnail_model.indexFromItem(item)
+                for item_in_order in self.copy_selection_order: # Iterate before clearing
+                    if item_in_order.data(SELECTION_ORDER_ROLE) is not None:
+                        item_in_order.setData(None, SELECTION_ORDER_ROLE)
+                        source_idx = self.source_thumbnail_model.indexFromItem(item_in_order)
                         proxy_idx = self.filter_proxy_model.mapFromSource(source_idx)
                         if proxy_idx.isValid():
                             self.thumbnail_view.update(proxy_idx) # Ensure item repaints
                 self.copy_selection_order.clear()
-                self.deselect_all_thumbnails() 
-            elif not errors:
-                self.statusBar.showMessage("コピーするファイルがありませんでした、または処理が完了しました。", 3000)
-        
-        # General cleanup for completed operations without errors,
-        # but specific copy mode cleanup is now handled within its block.
-        if status == 'completed' and not errors:
-            if not self.is_copy_mode: # If not in copy mode (e.g. after a move)
-                 self.deselect_all_thumbnails()
-            # If it was a copy operation, selection and order list are already cleared above.
-            # If it was a move operation, selected_file_paths is cleared if successful.
-            # self.deselect_all_thumbnails() was called in copy block, ensure it's called for move too if needed.
-            # The current logic for move already clears selected_file_paths and removes items from model.
-            # A general deselect_all_thumbnails() here might be redundant or could be simplified.
-            # For now, let's ensure it's called if not in copy mode.
-            # If we are still in copy mode after a copy, deselect_all_thumbnails() will trigger
-            # handle_thumbnail_selection_changed, which should correctly handle an empty selection.
-            pass # The common cleanup logic below might be sufficient or need adjustment.
+            # For move operations, selected_file_paths is already cleared if successful.
+            
+            # After successful file operations, check the source folder of the move for empty subdirectories
+            if operation_type == "move" and status == 'completed' and not errors:
+                # Determine the source folder. This is tricky if files were from multiple subfolders.
+                # For simplicity, if self.current_folder_path was the origin of *some* moved files, check it.
+                # A more robust approach would be to get the parent directory of each moved file.
+                # Let's assume the operation was on files within self.current_folder_path or its direct children.
+                
+                # Get the source folder from which files were moved.
+                # This information is not directly in 'result' for 'move'.
+                # We need to infer it. If selected_file_paths contained the moved files,
+                # we can take the common parent of these paths.
+                # However, selected_file_paths is cleared by this point if successful.
+                # We need the source folder path *before* it's cleared or changed.
+                # Let's use the `successfully_moved_src_paths` from the result.
+                
+                source_folders_to_check = set()
+                if successfully_moved_src_paths: # successfully_moved_src_paths is available from the result
+                    for src_path in successfully_moved_src_paths:
+                        parent_dir = os.path.dirname(src_path)
+                        if os.path.isdir(parent_dir): # Ensure parent directory still exists
+                             source_folders_to_check.add(parent_dir)
+                
+                # Also consider the folder that was active in the UI, if it was a source
+                if self.current_folder_path and os.path.isdir(self.current_folder_path):
+                    # Check if any moved file's parent is the current_folder_path
+                    # This logic might be redundant if current_folder_path is already in source_folders_to_check
+                    # from the successfully_moved_src_paths.
+                    # For now, let's add it to be sure, if it's a valid directory.
+                    source_folders_to_check.add(self.current_folder_path)
 
-        # Final common deselection if operation was completed without error
-        if status == 'completed' and not errors:
-             self.deselect_all_thumbnails()
+
+                for folder_to_check in source_folders_to_check:
+                    if os.path.isdir(folder_to_check): # Double check it's still a dir
+                        logger.info(f"ファイル移動完了後、移動元フォルダ '{folder_to_check}' の空サブフォルダ削除を試みます。")
+                        self._try_delete_empty_subfolders(folder_to_check)
+                    else:
+                        logger.debug(f"ファイル移動完了後、フォルダ '{folder_to_check}' は存在しないかディレクトリではないため、空フォルダチェックをスキップします。")
+
 
     def _save_settings(self):
         # Read existing settings first to preserve other values like image_preview_mode
@@ -1193,6 +1495,8 @@ class MainWindow(QMainWindow):
         settings["recursive_search"] = self.recursive_search_enabled
         settings["image_preview_mode"] = self.image_preview_mode 
         settings["thumbnail_size"] = self.current_thumbnail_size # Ensure this is also saved
+        settings["sort_key_index"] = self.current_sort_key_index
+        settings["sort_order"] = self.current_sort_order.value # Store enum's integer value
 
         # Write the combined settings back
         self._write_app_settings_file(settings)
@@ -1220,10 +1524,31 @@ class MainWindow(QMainWindow):
                     # self.recursive_search_enabled and the button text.
                     self.recursive_toggle_button.setChecked(recursive_enabled_from_settings)
                     logger.info(f"再帰検索設定を読み込みました: {'ON' if recursive_enabled_from_settings else 'OFF'}")
-                # If not found or not bool, it will retain its default initialized state from __init__
-                # and the button's initial setChecked state.
+                
+                # Load sort settings
+                loaded_sort_key_index = settings.get("sort_key_index", 0) # Default to filename
+                if 0 <= loaded_sort_key_index < self.sort_key_combo.count():
+                    self.current_sort_key_index = loaded_sort_key_index
+                    self.sort_key_combo.setCurrentIndex(self.current_sort_key_index)
+                else:
+                    logger.warning(f"保存されたソートキーインデックスが無効: {loaded_sort_key_index}")
+
+                loaded_sort_order_int = settings.get("sort_order", Qt.SortOrder.AscendingOrder.value) # Use .value for default
+                self.current_sort_order = Qt.SortOrder(loaded_sort_order_int) # Convert int back to Qt.SortOrder
+                
+                if self.current_sort_order == Qt.SortOrder.AscendingOrder:
+                    self.sort_order_button.setText("昇順 ▲")
+                else:
+                    self.sort_order_button.setText("降順 ▼")
+                # self.sort_order_button.setChecked(self.current_sort_order == Qt.SortOrder.DescendingOrder) # Not needed as button is not checkable
+
+                logger.info(f"ソート設定を読み込みました: Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
+                # Apply sort settings after loading them and updating UI elements
+                # self._apply_sort_and_filter_update() # Removed from here
             else:
                 logger.info(f"設定ファイルが見つかりません ({APP_SETTINGS_FILE})。デフォルト状態で起動します。")
+                # Apply default sort settings if no settings file
+                # self._apply_sort_and_filter_update() # Removed from here
 
         except json.JSONDecodeError as e:
             logger.error(f"設定ファイルの読み込み中にJSONデコードエラーが発生しました: {e}", exc_info=True)
@@ -1232,6 +1557,142 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"設定の読み込み中に予期せぬエラーが発生しました: {e}", exc_info=True)
 
+    # Removed _debug_button_click_and_call_handler
+
+    def _try_delete_empty_subfolders(self, target_folder_path):
+        """
+        Attempts to find and delete empty subfolders within the target_folder_path.
+        This method is designed to be called internally.
+        The actual deletion confirmation (Yes/No) is handled by _handle_send_empty_folders_to_trash.
+        """
+        if not target_folder_path or not os.path.isdir(target_folder_path):
+            logger.debug(f"指定されたフォルダパス '{target_folder_path}' が無効なため、空フォルダ削除をスキップします。")
+            return
+
+        logger.info(f"'{target_folder_path}' 内の空サブフォルダ検索を開始します。")
+        
+        try:
+            empty_folders = self._find_empty_subfolders(target_folder_path)
+        except Exception as e:
+            logger.error(f"'{target_folder_path}' の空フォルダ検索中にエラー: {e}", exc_info=True)
+            return
+
+        if not empty_folders:
+            logger.info(f"'{target_folder_path}' 内に空のサブフォルダは見つかりませんでした。")
+            return
+        
+        logger.info(f"'{target_folder_path}' 内に {len(empty_folders)} 個の空サブフォルダが見つかりました。削除処理を開始します。")
+        self._handle_send_empty_folders_to_trash(target_folder_path, empty_folders)
+
+
+    def _handle_send_empty_folders_to_trash(self, parent_folder_path_for_context, empty_folders_to_delete):
+        """
+        Handles the actual deletion of a list of pre-identified empty folders.
+        Shows confirmation and summary messages.
+        parent_folder_path_for_context is the folder that was initially targeted for the scan.
+        empty_folders_to_delete is the list of specific empty subfolders found within it.
+        """
+        logger.debug(f"_handle_send_empty_folders_to_trash called for parent '{parent_folder_path_for_context}' with {len(empty_folders_to_delete)} folders.")
+
+        if not empty_folders_to_delete:
+            logger.info("削除対象の空フォルダがありません。")
+            return
+
+        confirm_message = "空のサブフォルダが見つかりました。ゴミ箱に移動しますか？\n\n"
+        for folder in empty_folders_to_delete:
+            confirm_message += f"- {folder}\n"
+        
+        # Add a reference to the parent folder in the message if needed for clarity, 
+        # but the primary request is to simplify the first line.
+        # For now, let's keep the parent folder context out of the main question line.
+        # confirm_message += f"\n(対象親フォルダ: {parent_folder_path_for_context})" # Optional addition for context
+
+        reply = QMessageBox.question(self, "空フォルダ削除の確認", confirm_message,
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            successful_sends = []
+            failed_sends = []
+            logger.info(f"ユーザーが '{parent_folder_path_for_context}' 内の空フォルダ削除を承認しました。")
+            try:
+                for folder_path_str in empty_folders_to_delete:
+                    normalized_path = ""
+                    try:
+                        normalized_path = os.path.normpath(folder_path_str)
+                        logger.info(f"ゴミ箱へ移動 (正規化試行): {normalized_path} (元: {folder_path_str})")
+                        send2trash.send2trash(normalized_path)
+                        successful_sends.append(normalized_path)
+                    except Exception as e:
+                        path_for_error_msg = normalized_path if normalized_path else folder_path_str
+                        logger.error(f"フォルダ '{path_for_error_msg}' のゴミ箱への移動に失敗: {e}", exc_info=True)
+                        failed_sends.append(f"{path_for_error_msg}: {e}")
+                
+                summary_title = f"空フォルダ削除完了 ({os.path.basename(parent_folder_path_for_context)})"
+                summary_text = f"{len(successful_sends)}個のフォルダをゴミ箱に移動しました。"
+                if failed_sends:
+                    summary_text += f"\n\n以下のフォルダの移動に失敗しました:\n" + "\n".join(failed_sends)
+                    QMessageBox.warning(self, summary_title + "（一部エラー）", summary_text)
+                else:
+                    QMessageBox.information(self, summary_title, summary_text)
+            except ImportError:
+                logger.error("send2trashモジュールが見つかりません。pip install Send2Trash を実行してください。")
+                QMessageBox.critical(self, "エラー", "send2trashモジュールが必要です。インストールしてください。")
+                return 
+            except Exception as e:
+                logger.error(f"空フォルダのゴミ箱への移動中に予期せぬエラー: {e}", exc_info=True)
+                QMessageBox.critical(self, "エラー", f"処理中に予期せぬエラーが発生しました:\n{e}")
+            finally:
+                if successful_sends or failed_sends: 
+                    if os.path.exists(parent_folder_path_for_context):
+                        logger.info(f"空フォルダ削除処理試行後、フォルダツリー '{parent_folder_path_for_context}' を更新します。")
+                        self.update_folder_tree(parent_folder_path_for_context)
+                    elif not os.path.exists(parent_folder_path_for_context) and successful_sends : 
+                        logger.info(f"スキャン対象フォルダ '{parent_folder_path_for_context}' が削除されたため、ツリーのルートをクリアします。")
+                        self.file_system_model.setRootPath("") 
+                        self.source_thumbnail_model.clear()    
+                        if self.current_folder_path == parent_folder_path_for_context:
+                            self.current_folder_path = None
+        else:
+            logger.info(f"'{parent_folder_path_for_context}' 内の空のサブフォルダのゴミ箱への移動はキャンセルされました。")
+
+
+    def _find_empty_subfolders(self, parent_dir):
+        empty_folders = []
+        # Iterate over subdirectories non-recursively first
+        for entry in os.scandir(parent_dir):
+            if entry.is_dir():
+                # Recursively check if this subdirectory is empty or contains only empty subdirectories
+                if self._is_dir_empty_recursive(entry.path):
+                    empty_folders.append(entry.path)
+        return empty_folders
+
+    def _is_dir_empty_recursive(self, dir_path):
+        try:
+            # Attempt to list entries. If this fails (e.g. permission denied),
+            # we can't know if it's empty, so treat as non-empty.
+            entries = list(os.scandir(dir_path))
+        except OSError as e:
+            logger.warning(f"Could not scan directory '{dir_path}' due to OSError: {e}. Treating as non-empty for empty folder check.")
+            return False # Cannot determine, assume not empty for safety
+
+        if not entries:
+            # logger.debug(f"Directory '{dir_path}' has no entries, considered empty by itself.")
+            return True # No entries at all (no files, no subdirs)
+
+        for entry in entries:
+            if entry.is_file():
+                # logger.debug(f"Directory '{dir_path}' contains file '{entry.name}', not empty.")
+                return False # Found a file, not empty
+            elif entry.is_dir():
+                # logger.debug(f"Directory '{dir_path}' contains subdir '{entry.name}', checking recursively.")
+                if not self._is_dir_empty_recursive(entry.path):
+                    # logger.debug(f"Subdirectory '{entry.path}' is not empty, so '{dir_path}' is not empty.")
+                    return False # Found a non-empty subdirectory
+        
+        # If loop completes, means no files were found, and all subdirectories were recursively empty
+        # logger.debug(f"Directory '{dir_path}' contains no files and all subdirs are empty, considered empty.")
+        return True
 
     def closeEvent(self, event: QCloseEvent): # Add type hint for event
         logger.info("アプリケーション終了処理を開始します...")

@@ -195,14 +195,17 @@ class TagTextBrowser(QTextBrowser):
             
             # エスケープされた括弧のタグ処理 \(...\)
             elif i < text_length - 1 and text[i] == '\\' and text[i+1] == '(':
+                current_tag_segment_start = i # Store the actual start of this tag segment
                 i += 2  # \( をスキップ
                 while i < text_length:
                     if i < text_length - 1 and text[i] == '\\' and text[i+1] == ')':
-                        i += 2  # \) も含める
+                        i += 2  # Include \) and advance PAST it
                         break
                     i += 1
-                tag_text = text[start:i].strip()
-                self.tag_positions.append((start, i, tag_text))
+                # Here, i is the position AFTER the closing \) or end of text
+                tag_text = text[current_tag_segment_start:i].strip() 
+                if tag_text: # Ensure stripped tag is not empty
+                    self.tag_positions.append((current_tag_segment_start, i, tag_text))
             
             # 通常のタグ処理（カンマまで）
             else:

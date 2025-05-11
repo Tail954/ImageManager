@@ -1,5 +1,6 @@
 import logging
 import json
+import os # For os.path.getmtime
 from PyQt6.QtCore import QThread, pyqtSignal
 from PIL import Image
 try:
@@ -233,13 +234,14 @@ def extract_image_metadata(image_path):
 # --- End of Metadata Extraction Logic ---
 
 class ThumbnailLoaderThread(QThread):
-    thumbnailLoaded = pyqtSignal(str, object, dict)
+    thumbnailLoaded = pyqtSignal(object, object, dict) # item, q_image, metadata_dict
     progressUpdated = pyqtSignal(int, int)
     finished = pyqtSignal()
 
-    def __init__(self, file_paths, target_size):
+    def __init__(self, file_paths, items_to_process, target_size):
         super().__init__()
         self.file_paths = file_paths
+        self.items_to_process = items_to_process # List of QStandardItem
         self.target_size = target_size
         self._is_running = True
 
@@ -251,10 +253,11 @@ class ThumbnailLoaderThread(QThread):
 
         total_files = len(self.file_paths)
         processed_count = 0
-        for file_path in self.file_paths:
+        for i, file_path in enumerate(self.file_paths):
             if not self._is_running:
                 break
             
+            item = self.items_to_process[i] # Get the corresponding QStandardItem
             q_image = None
             metadata_dict = {
                 'positive_prompt': '',
@@ -276,18 +279,18 @@ class ThumbnailLoaderThread(QThread):
                 # Extract metadata using the revised function
                 metadata_dict = extract_image_metadata(file_path) # Pass file_path, not img object
                 
-                self.thumbnailLoaded.emit(file_path, q_image, metadata_dict)
+                self.thumbnailLoaded.emit(item, q_image, metadata_dict) # Emit item, q_image, metadata
                 processed_count += 1
                 self.progressUpdated.emit(processed_count, total_files)
 
             except FileNotFoundError:
                 logger.error(f"サムネイル生成/メタデータ抽出エラー (ファイルが見つかりません): {file_path}")
-                self.thumbnailLoaded.emit(file_path, None, metadata_dict) # Emit with default/empty metadata
+                self.thumbnailLoaded.emit(item, None, metadata_dict) # Emit item with default/empty metadata
                 processed_count += 1
                 self.progressUpdated.emit(processed_count, total_files)
             except Exception as e:
                 logger.error(f"サムネイル生成/メタデータ抽出エラー ({file_path}): {e}", exc_info=True)
-                self.thumbnailLoaded.emit(file_path, None, metadata_dict) # Emit with default/empty metadata
+                self.thumbnailLoaded.emit(item, None, metadata_dict) # Emit item with default/empty metadata
                 processed_count += 1
                 self.progressUpdated.emit(processed_count, total_files)
                 

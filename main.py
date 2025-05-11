@@ -5,11 +5,11 @@ from src.main_window import MainWindow # Import MainWindow from the src package
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.DEBUG, # Changed to DEBUG
+        level=logging.INFO, # Changed to INFO to reduce log output
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr), # Log to console
-            # logging.FileHandler("imagemanager.log", encoding='utf-8') # Log to file (temporarily disabled)
+            logging.FileHandler("imagemanager.log", mode='w', encoding='utf-8') # Log to file, mode 'w' to overwrite
         ]
     )
     logger = logging.getLogger(__name__)

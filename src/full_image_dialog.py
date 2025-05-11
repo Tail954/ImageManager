@@ -13,16 +13,54 @@ PREVIEW_MODE_ORIGINAL_ZOOM = "original_zoom"
 class FullImageDialog(QDialog):
     def __init__(self, image_path_list, current_index, preview_mode=PREVIEW_MODE_FIT, parent=None):
         super().__init__(parent)
-        self.all_image_paths = image_path_list
+        self.all_image_paths = image_path_list if image_path_list is not None else []
         self.current_index = current_index
-        self.image_path = self.all_image_paths[self.current_index] if self.all_image_paths and 0 <= self.current_index < len(self.all_image_paths) else None
         self.preview_mode = preview_mode
         self.scale_factor = 1.0 # For original_zoom mode
-        
         self.pixmap = QPixmap()
         self.saved_geometry = None # For storing geometry before maximizing
 
-        self.setWindowTitle(f"{os.path.basename(self.image_path if self.image_path else 'No Image')} - ImageManager")
+        # Determine initial image_path and window title carefully
+        if not self.all_image_paths:
+            self.image_path = None
+            self.current_index = -1 # Indicate invalid index
+            logger.warning("FullImageDialog initialized with no image paths.")
+            self.setWindowTitle("画像なし - ImageManager")
+        elif not (0 <= self.current_index < len(self.all_image_paths)):
+            logger.warning(f"FullImageDialog initialized with invalid current_index {self.current_index} for {len(self.all_image_paths)} images. Defaulting to first image or none.")
+            self.current_index = 0 if self.all_image_paths else -1
+            if self.current_index != -1:
+                candidate_path = self.all_image_paths[self.current_index]
+                if candidate_path is None or not isinstance(candidate_path, str):
+                    logger.warning(f"Image path at index {self.current_index} is invalid (None or not a string): {candidate_path}. Treating as no image.")
+                    self.image_path = None
+                    self.setWindowTitle("画像なし - ImageManager")
+                else:
+                    self.image_path = candidate_path
+                    try:
+                        title_filename = os.path.basename(self.image_path)
+                        self.setWindowTitle(f"{title_filename} - ImageManager")
+                    except Exception as e:
+                        logger.error(f"Error getting basename for title from '{self.image_path}': {e}")
+                        self.setWindowTitle("エラー - ImageManager")
+            else:
+                self.image_path = None
+                self.setWindowTitle("画像なし - ImageManager")
+        else: # 0 <= self.current_index < len(self.all_image_paths)
+            candidate_path = self.all_image_paths[self.current_index]
+            if candidate_path is None or not isinstance(candidate_path, str):
+                logger.warning(f"Image path at index {self.current_index} is invalid (None or not a string): {candidate_path}. Treating as no image.")
+                self.image_path = None
+                self.setWindowTitle("画像なし - ImageManager")
+            else:
+                self.image_path = candidate_path
+                try:
+                    title_filename = os.path.basename(self.image_path)
+                    self.setWindowTitle(f"{title_filename} - ImageManager")
+                except Exception as e:
+                    logger.error(f"Error getting basename for title from '{self.image_path}': {e}")
+                    self.setWindowTitle("エラー - ImageManager")
+
         self.setMinimumSize(400, 300)
         
         # Main layout
@@ -78,13 +116,26 @@ class FullImageDialog(QDialog):
 
     def update_image(self, new_image_path_list, new_current_index):
         """Updates the image list and current index, then loads the image."""
-        self.all_image_paths = new_image_path_list
+        self.all_image_paths = new_image_path_list if new_image_path_list is not None else []
         self.current_index = new_current_index
-        if self.all_image_paths and 0 <= self.current_index < len(self.all_image_paths):
-            self.image_path = self.all_image_paths[self.current_index]
-            # Window title will be set in _load_current_image (via _load_and_display_image)
+
+        if not self.all_image_paths:
+            self.image_path = None
+            self.current_index = -1
+            logger.warning("update_image called with no image paths.")
+            self.setWindowTitle("画像なし - ImageManager")
+        elif not (0 <= self.current_index < len(self.all_image_paths)):
+            logger.warning(f"update_image called with invalid current_index {self.current_index} for {len(self.all_image_paths)} images. Defaulting to first image or none.")
+            self.current_index = 0 if self.all_image_paths else -1
+            if self.current_index != -1:
+                self.image_path = self.all_image_paths[self.current_index]
+                # Window title will be set in _load_current_image
+            else:
+                self.image_path = None
+                self.setWindowTitle("画像なし - ImageManager")
         else:
-            self.image_path = None # Mark as invalid
+            self.image_path = self.all_image_paths[self.current_index]
+            # Window title will be set in _load_current_image
         
         self._load_current_image() # This will load, display, and update nav buttons
 
@@ -95,34 +146,56 @@ class FullImageDialog(QDialog):
 
     def _load_current_image(self):
         """Loads the image at the current_index from all_image_paths."""
-        if self.all_image_paths and 0 <= self.current_index < len(self.all_image_paths):
-            self.image_path = self.all_image_paths[self.current_index]
-            self.setWindowTitle(f"{os.path.basename(self.image_path)} - ImageManager")
+        if not self.all_image_paths or self.current_index == -1:
+            logger.warning("Cannot load current image, list is empty or index is invalid.")
+            self.image_label.setText("表示できる画像がありません。") # This text might be overridden by _update_image_display
+            self.setWindowTitle("画像なし - ImageManager")
+            self.pixmap = QPixmap()
+            self._update_image_display() # This will ensure label is consistent
+        elif 0 <= self.current_index < len(self.all_image_paths):
+            candidate_path = self.all_image_paths[self.current_index]
+            self.image_path = candidate_path # Set self.image_path first
+
+            if self.image_path is None or not isinstance(self.image_path, str):
+                logger.warning(f"Image path at index {self.current_index} for _load_current_image is invalid: {self.image_path}. Treating as no image.")
+                self.setWindowTitle("画像なし - ImageManager")
+                # self.image_path is already None or invalid, _load_and_display_image will handle it
+            else:
+                try:
+                    title_filename = os.path.basename(self.image_path)
+                    self.setWindowTitle(f"{title_filename} - ImageManager")
+                except Exception as e:
+                    logger.error(f"Error getting basename for title in _load_current_image from '{self.image_path}': {e}")
+                    self.setWindowTitle("エラー - ImageManager")
+            
             self.pixmap = QPixmap() # Reset before loading
-            self._load_and_display_image() 
-        else:
-            logger.warning("Cannot load current image, index or list is invalid.")
-            self.image_label.setText("画像インデックスが無効です。")
-            self.pixmap = QPixmap() # Ensure pixmap is cleared
-            self._update_image_display() # Clear image display
+            self._load_and_display_image()
+        else: # Should not be reached if logic above is correct, but as a fallback
+            logger.error(f"Unexpected state in _load_current_image: index {self.current_index}, list size {len(self.all_image_paths)}")
+            self.image_label.setText("画像読み込みエラー (内部状態異常)。") # This text might be overridden by _update_image_display
+            self.setWindowTitle("エラー - ImageManager")
+            self.pixmap = QPixmap()
+            self._update_image_display()
         self._update_navigation_buttons()
 
 
     def show_previous_image(self):
-        if self.all_image_paths and self.current_index > 0:
-            self.current_index -= 1
-            self._load_current_image()
+        if not self.all_image_paths or self.current_index <= 0: # Also check if already at first image
+            return
+        self.current_index -= 1
+        self._load_current_image()
 
     def show_next_image(self):
-        if self.all_image_paths and self.current_index < len(self.all_image_paths) - 1:
-            self.current_index += 1
-            self._load_current_image()
+        if not self.all_image_paths or self.current_index >= len(self.all_image_paths) - 1: # Also check if already at last
+            return
+        self.current_index += 1
+        self._load_current_image()
 
     def _update_navigation_buttons(self):
-        if not self.all_image_paths or self.image_path is None:
+        if not self.all_image_paths or self.current_index == -1:
             self.prev_button.setEnabled(False)
             self.next_button.setEnabled(False)
-            self.counter_label.setText("N/A")
+            self.counter_label.setText("0 / 0") # Or "N/A" or ""
             return
 
         self.prev_button.setEnabled(self.current_index > 0)
@@ -159,26 +232,41 @@ class FullImageDialog(QDialog):
 
 
     def _load_and_display_image(self):
-        if not self.image_path or not os.path.exists(self.image_path): # Check self.image_path here
-            logger.error(f"Image path is invalid or does not exist: {self.image_path}")
-            self.image_label.setText("画像が見つかりません。")
-            self.pixmap = QPixmap() # Clear pixmap
-            # self._update_navigation_buttons() # Update nav based on invalid image
+        if not self.image_path:
+            logger.error("Image path is None, cannot load.")
+            self.image_label.setText("画像パスが指定されていません。")
+            self.pixmap = QPixmap()
+            self._update_image_display() # Ensure display is cleared
+            self._update_navigation_buttons()
+            return
+        if not os.path.exists(self.image_path):
+            logger.error(f"Image path does not exist: {self.image_path}")
+            self.image_label.setText(f"指定された画像ファイルが見つかりません:\n{os.path.basename(self.image_path)}")
+            self.pixmap = QPixmap() 
+            self._update_image_display()
+            self._update_navigation_buttons() 
             return
 
+        self.pixmap = QPixmap() # Ensure pixmap is new for each load attempt
         if not self.pixmap.load(self.image_path):
             logger.error(f"Failed to load image: {self.image_path}")
             self.image_label.setText(f"画像の読み込みに失敗しました:\n{os.path.basename(self.image_path)}")
-            self.pixmap = QPixmap() # Clear pixmap
-            # self._update_navigation_buttons() # Update nav based on failed load
+            # self.pixmap remains null from the QPixmap() call above
+            self._update_image_display() # Ensure display reflects failure (cleared)
+            self._update_navigation_buttons() 
             return
         
         self._update_image_display()
-        self._update_navigation_buttons() # Update navigation buttons after successful load or failure message
+        self._update_navigation_buttons() 
 
     def _update_image_display(self):
-        if self.pixmap.isNull():
-            self.image_label.clear() # Clear the label if pixmap is null
+        if self.pixmap.isNull() or self.image_path is None: # Added check for self.image_path
+            self.image_label.clear() 
+            if self.image_path is None and self.all_image_paths: # List might exist but current index was bad
+                 self.image_label.setText("表示する画像が選択されていません。")
+            elif not self.all_image_paths:
+                 self.image_label.setText("表示できる画像がありません。")
+            # If pixmap isNull but image_path was valid, load error text is already set by _load_and_display_image
             return
 
         if self.preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM:
