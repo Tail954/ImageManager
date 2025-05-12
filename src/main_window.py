@@ -36,10 +36,12 @@ from .renamed_files_dialog import RenamedFilesDialog # Import new dialog
 from .full_image_dialog import FullImageDialog # Import the new full image dialog
 from .settings_dialog import SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM # Import settings dialog and constants
 from .drop_window import DropWindow # <--- ★追加: DropWindowをインポート
+from .wc_creator_dialog import WCCreatorDialog
 
 from .constants import (
     METADATA_ROLE, SELECTION_ORDER_ROLE,
-    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU
+    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
+    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT
 )
 
 
@@ -270,6 +272,7 @@ class MainWindow(QMainWindow):
         self.current_sort_order = Qt.SortOrder.AscendingOrder # Qt.SortOrder.AscendingOrder or Qt.SortOrder.DescendingOrder
         self.load_start_time = None # For load time measurement
         self.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA # Default value
+        self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
 
         # Load application-wide settings first
         self._load_app_settings()
@@ -470,7 +473,7 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 900])
         main_layout.addWidget(splitter)
 
-        self._load_settings() # Load UI specific settings after all UI elements are initialized
+        # self._load_settings() # Load UI specific settings after all UI elements are initialized <=self._load_app_settings()に統合
         self._apply_sort_and_filter_update() # Apply initial sort based on loaded or default settings
         self._update_status_bar_info() # Initial status bar update
 
@@ -591,13 +594,20 @@ class MainWindow(QMainWindow):
         toggle_drop_window_action.triggered.connect(self._toggle_drop_window)
         menu_bar.addAction(toggle_drop_window_action) # メニューバーに直接「D&Dウィンドウ」を配置
 
+        tool_menu = menu_bar.addMenu("&ツール")
+
+        wc_creator_action = QAction("ワイルドカード作成 (&W)", self) # '&W' でアクセスキー W
+        wc_creator_action.setStatusTip("選択された画像のプロンプトを整形・出力します。")
+        wc_creator_action.triggered.connect(self._open_wc_creator_dialog)
+        tool_menu.addAction(wc_creator_action)
+
     def _open_settings_dialog(self):
-         #...(このメソッドの内容は変更なし)...
         dialog = SettingsDialog(
             current_thumbnail_size=self.current_thumbnail_size,
             available_thumbnail_sizes=self.available_sizes,
             current_preview_mode=self.image_preview_mode,
             current_right_click_action=self.thumbnail_right_click_action, # Pass current right-click action
+            current_wc_comment_format=self.wc_creator_comment_format,
             parent=self
         )
         if dialog.exec():
@@ -611,6 +621,11 @@ class MainWindow(QMainWindow):
                 self.thumbnail_right_click_action = new_right_click_action
                 logger.info(f"サムネイル右クリック時の動作が変更されました: {self.thumbnail_right_click_action}")
 
+            new_wc_format = dialog.get_selected_wc_comment_format()
+            if self.wc_creator_comment_format != new_wc_format:
+                self.wc_creator_comment_format = new_wc_format
+                logger.info(f"WC Creator コメント出力形式が変更されました: {self.wc_creator_comment_format}")
+                
             new_thumbnail_size = dialog.get_selected_thumbnail_size()
             old_thumbnail_size = self.current_thumbnail_size
             if new_thumbnail_size != old_thumbnail_size:
@@ -632,11 +647,7 @@ class MainWindow(QMainWindow):
                 else:
                     logger.info("ユーザーがサムネイルサイズ変更をキャンセルしました。")
 
-            current_app_settings = self._read_app_settings_file()
-            current_app_settings["image_preview_mode"] = self.image_preview_mode
-            current_app_settings["thumbnail_size"] = self.current_thumbnail_size
-            current_app_settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.thumbnail_right_click_action
-            self._write_app_settings_file(current_app_settings)
+            self._save_settings() # ★★★ 全設定を_save_settingsメソッド経由で保存 ★★★
             logger.info("設定ダイアログがOKで閉じられました。設定を保存しました。")
         else:
             logger.info("設定ダイアログがキャンセルされました。変更は保存されません。")
@@ -654,7 +665,6 @@ class MainWindow(QMainWindow):
         return {}
 
     def _write_app_settings_file(self, settings_dict):
-         #...(このメソッドの内容は変更なし)...
         try:
             with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(settings_dict, f, indent=4)
@@ -663,19 +673,59 @@ class MainWindow(QMainWindow):
             logger.error(f"Error writing to {APP_SETTINGS_FILE} via MainWindow: {e}")
 
     def _load_app_settings(self):
-         #...(このメソッドの内容は変更なし)...
+        """アプリケーション全体の設定を読み込み、UI要素に反映する"""
         settings = self._read_app_settings_file()
+        
+        # 画像表示モード
         self.image_preview_mode = settings.get("image_preview_mode", PREVIEW_MODE_FIT)
-        logger.info(f"読み込まれた画像表示モード (MainWindow): {self.image_preview_mode}")
+        logger.info(f"読み込まれた画像表示モード: {self.image_preview_mode}")
+
+        # サムネイル右クリック動作
         self.thumbnail_right_click_action = settings.get(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
-        logger.info(f"読み込まれたサムネイル右クリック動作 (MainWindow): {self.thumbnail_right_click_action}")
+        logger.info(f"読み込まれたサムネイル右クリック動作: {self.thumbnail_right_click_action}")
+
+        # サムネイルサイズ
         loaded_thumbnail_size = settings.get("thumbnail_size", self.available_sizes[1])
         if loaded_thumbnail_size in self.available_sizes:
             self.current_thumbnail_size = loaded_thumbnail_size
         else:
             logger.warning(f"保存されたサムネイルサイズ {loaded_thumbnail_size}px は無効です。デフォルトの {self.available_sizes[1]}px を使用します。")
             self.current_thumbnail_size = self.available_sizes[1]
-        logger.info(f"読み込まれたサムネイルサイズ (MainWindow): {self.current_thumbnail_size}px")
+        logger.info(f"読み込まれたサムネイルサイズ: {self.current_thumbnail_size}px")
+
+        # WC Creator コメント形式
+        self.wc_creator_comment_format = settings.get(WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT)
+        logger.info(f"読み込まれたWC Creatorコメント形式: {self.wc_creator_comment_format}")
+
+        # 最終フォルダパス
+        if lp_val := settings.get("last_folder_path"):
+            if os.path.isdir(lp_val):
+                self.initial_dialog_path = lp_val
+                logger.info(f"前回終了時のフォルダパスを読み込みました: {self.initial_dialog_path}")
+            else:
+                logger.warning(f"保存されたフォルダパスが無効または見つかりません: {lp_val}")
+
+        # 再帰検索設定
+        self.recursive_search_enabled = settings.get("recursive_search", True)
+        if hasattr(self, 'recursive_toggle_button') and self.recursive_toggle_button:
+            self.recursive_toggle_button.setChecked(self.recursive_search_enabled)
+            self.recursive_toggle_button.setText(f"サブフォルダ検索: {'ON' if self.recursive_search_enabled else 'OFF'}")
+        logger.info(f"再帰検索設定を読み込みました: {'ON' if self.recursive_search_enabled else 'OFF'}")
+
+        # ソート設定
+        self.current_sort_key_index = settings.get("sort_key_index", 0)
+        if hasattr(self, 'sort_key_combo') and self.sort_key_combo:
+            if 0 <= self.current_sort_key_index < self.sort_key_combo.count():
+                self.sort_key_combo.setCurrentIndex(self.current_sort_key_index)
+            else:
+                logger.warning(f"保存されたソートキーインデックスが無効: {self.current_sort_key_index}。0にリセットします。")
+                self.current_sort_key_index = 0
+                self.sort_key_combo.setCurrentIndex(0)
+
+        self.current_sort_order = Qt.SortOrder(settings.get("sort_order", Qt.SortOrder.AscendingOrder.value))
+        if hasattr(self, 'sort_order_button') and self.sort_order_button:
+            self.sort_order_button.setText("降順 ▼" if self.current_sort_order == Qt.SortOrder.DescendingOrder else "昇順 ▲")
+        logger.info(f"ソート設定を読み込みました: Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
 
     def select_folder(self):
          #...(このメソッドの内容は変更なし)...
@@ -1143,6 +1193,60 @@ class MainWindow(QMainWindow):
              )
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
 
+    def _open_wc_creator_dialog(self):
+        logger.info("プロンプト整形ツールを起動します。")
+
+        selected_proxy_indexes = self.thumbnail_view.selectionModel().selectedIndexes()
+        if not selected_proxy_indexes:
+            QMessageBox.information(self, "情報", "整形対象の画像をサムネイル一覧から選択してください。")
+            return
+
+        selected_files_for_wc = []
+        metadata_for_wc = []
+
+        # 選択された順序を保持するために、インデックスではなくアイテムのリストから処理する方が良いが、
+        # QListViewの選択モデルはインデックスのリストを返す。
+        # 順序が重要でない場合はこのままで良い。重要なら追加の工夫が必要。
+        # 今回は選択順は考慮しない。
+        processed_paths = set() # 重複処理を避けるため（通常QModelIndexは重複しないが念のため）
+
+        for proxy_idx in selected_proxy_indexes:
+            if proxy_idx.column() == 0: # 最初のカラムのインデックスのみを処理 (通常はそうだが念のため)
+                source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
+                item = self.source_thumbnail_model.itemFromIndex(source_idx)
+                if item:
+                    file_path = item.data(Qt.ItemDataRole.UserRole)
+                    if file_path and file_path not in processed_paths:
+                        metadata = item.data(METADATA_ROLE) # まずアイテムから取得試行
+                        if not isinstance(metadata, dict): # アイテムにないか、形式が不正
+                            metadata = self.metadata_cache.get(file_path) # 次にキャッシュ
+                        if not isinstance(metadata, dict): # キャッシュにもないか、形式が不正
+                            logger.warning(f"WC Creator用メタデータ: {file_path} のキャッシュが見つからないため、再抽出します。")
+                            metadata = self._extract_metadata_for_file(file_path)
+                            self.metadata_cache[file_path] = metadata # 抽出したらキャッシュ保存
+                        
+                        if isinstance(metadata, dict):
+                            selected_files_for_wc.append(file_path)
+                            metadata_for_wc.append(metadata)
+                            processed_paths.add(file_path)
+                        else:
+                            logger.error(f"WC Creator: {file_path} のメタデータ取得に失敗しました。スキップします。")
+
+        if not selected_files_for_wc:
+            QMessageBox.warning(self, "エラー", "有効な画像データが見つかりませんでした。")
+            return
+
+        logger.info(f"{len(selected_files_for_wc)} 個の画像をWC Creatorに渡します。")
+        # WCCreatorDialogのインスタンスを作成して表示
+        # このダイアログはモーダルで表示するのが一般的かもしれない
+        wc_dialog = WCCreatorDialog(
+            selected_file_paths=selected_files_for_wc,
+            metadata_list=metadata_for_wc,
+            output_format=self.wc_creator_comment_format,
+            parent=self
+        )
+        wc_dialog.exec() # モーダルで表示
+        logger.info("プロンプト整形ツールを閉じました。")
 
     # --- File Operation Handlers ---
     def _handle_copy_mode_toggled(self, checked):
@@ -1356,55 +1460,59 @@ class MainWindow(QMainWindow):
 
 
     def _save_settings(self):
-         #...(このメソッドの内容は変更なし)...
-        settings = self._read_app_settings_file()
+        """アプリケーション終了時や設定変更時に設定を保存する"""
+        settings = self._read_app_settings_file() # 既存の設定を読み込むのが良い
+        
+        # 更新する値を設定
         settings["last_folder_path"] = self.current_folder_path
         settings["recursive_search"] = self.recursive_search_enabled
         settings["image_preview_mode"] = self.image_preview_mode
         settings["thumbnail_size"] = self.current_thumbnail_size
         settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.thumbnail_right_click_action
         settings["sort_key_index"] = self.current_sort_key_index
-        settings["sort_order"] = self.current_sort_order.value
+        settings["sort_order"] = self.current_sort_order.value # enumの値を保存
+        settings[WC_COMMENT_OUTPUT_FORMAT] = self.wc_creator_comment_format # ★★★ WC Creator設定保存 ★★★
+
         self._write_app_settings_file(settings)
 
-    def _load_settings(self):
-         #...(このメソッドの内容は変更なし)...
-        try:
-            if os.path.exists(APP_SETTINGS_FILE):
-                with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-                last_folder_path = settings.get("last_folder_path")
-                if last_folder_path and os.path.isdir(last_folder_path):
-                    logger.info(f"前回終了時のフォルダパスを読み込みました: {last_folder_path} (ダイアログ初期位置用)")
-                    self.initial_dialog_path = last_folder_path
-                else:
-                    if last_folder_path:
-                         logger.warning(f"保存されたフォルダパスが無効または見つかりません: {last_folder_path}")
-                recursive_enabled_from_settings = settings.get("recursive_search")
-                if isinstance(recursive_enabled_from_settings, bool):
-                    self.recursive_toggle_button.setChecked(recursive_enabled_from_settings)
-                    logger.info(f"再帰検索設定を読み込みました: {'ON' if recursive_enabled_from_settings else 'OFF'}")
-                loaded_sort_key_index = settings.get("sort_key_index", 0)
-                if 0 <= loaded_sort_key_index < self.sort_key_combo.count():
-                    self.current_sort_key_index = loaded_sort_key_index
-                    self.sort_key_combo.setCurrentIndex(self.current_sort_key_index)
-                else:
-                    logger.warning(f"保存されたソートキーインデックスが無効: {loaded_sort_key_index}")
-                loaded_sort_order_int = settings.get("sort_order", Qt.SortOrder.AscendingOrder.value)
-                self.current_sort_order = Qt.SortOrder(loaded_sort_order_int)
-                if self.current_sort_order == Qt.SortOrder.AscendingOrder:
-                    self.sort_order_button.setText("昇順 ▲")
-                else:
-                    self.sort_order_button.setText("降順 ▼")
-                logger.info(f"ソート設定を読み込みました: Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
-            else:
-                logger.info(f"設定ファイルが見つかりません ({APP_SETTINGS_FILE})。デフォルト状態で起動します。")
-        except json.JSONDecodeError as e:
-            logger.error(f"設定ファイルの読み込み中にJSONデコードエラーが発生しました: {e}", exc_info=True)
-        except IOError as e:
-             logger.error(f"設定ファイルの読み込み中にIOエラーが発生しました: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"設定の読み込み中に予期せぬエラーが発生しました: {e}", exc_info=True)
+    # self._load_app_settings()に統合
+    # def _load_settings(self):
+    #     try:
+    #         if os.path.exists(APP_SETTINGS_FILE):
+    #             with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+    #                 settings = json.load(f)
+    #             last_folder_path = settings.get("last_folder_path")
+    #             if last_folder_path and os.path.isdir(last_folder_path):
+    #                 logger.info(f"前回終了時のフォルダパスを読み込みました: {last_folder_path} (ダイアログ初期位置用)")
+    #                 self.initial_dialog_path = last_folder_path
+    #             else:
+    #                 if last_folder_path:
+    #                      logger.warning(f"保存されたフォルダパスが無効または見つかりません: {last_folder_path}")
+    #             recursive_enabled_from_settings = settings.get("recursive_search")
+    #             if isinstance(recursive_enabled_from_settings, bool):
+    #                 self.recursive_toggle_button.setChecked(recursive_enabled_from_settings)
+    #                 logger.info(f"再帰検索設定を読み込みました: {'ON' if recursive_enabled_from_settings else 'OFF'}")
+    #             loaded_sort_key_index = settings.get("sort_key_index", 0)
+    #             if 0 <= loaded_sort_key_index < self.sort_key_combo.count():
+    #                 self.current_sort_key_index = loaded_sort_key_index
+    #                 self.sort_key_combo.setCurrentIndex(self.current_sort_key_index)
+    #             else:
+    #                 logger.warning(f"保存されたソートキーインデックスが無効: {loaded_sort_key_index}")
+    #             loaded_sort_order_int = settings.get("sort_order", Qt.SortOrder.AscendingOrder.value)
+    #             self.current_sort_order = Qt.SortOrder(loaded_sort_order_int)
+    #             if self.current_sort_order == Qt.SortOrder.AscendingOrder:
+    #                 self.sort_order_button.setText("昇順 ▲")
+    #             else:
+    #                 self.sort_order_button.setText("降順 ▼")
+    #             logger.info(f"ソート設定を読み込みました: Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
+    #         else:
+    #             logger.info(f"設定ファイルが見つかりません ({APP_SETTINGS_FILE})。デフォルト状態で起動します。")
+    #     except json.JSONDecodeError as e:
+    #         logger.error(f"設定ファイルの読み込み中にJSONデコードエラーが発生しました: {e}", exc_info=True)
+    #     except IOError as e:
+    #          logger.error(f"設定ファイルの読み込み中にIOエラーが発生しました: {e}", exc_info=True)
+    #     except Exception as e:
+    #         logger.error(f"設定の読み込み中に予期せぬエラーが発生しました: {e}", exc_info=True)
 
 
     def _try_delete_empty_subfolders(self, target_folder_path):
