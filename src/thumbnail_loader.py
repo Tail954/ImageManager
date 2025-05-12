@@ -1,3 +1,4 @@
+# src/thumbnail_loader.py
 import logging
 import json
 import os # For os.path.getmtime
