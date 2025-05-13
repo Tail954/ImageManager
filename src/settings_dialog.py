@@ -7,17 +7,15 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPainter, QColor, QPen
 from src.constants import (
-    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
-    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT # WC Creator関連をインポート
+    APP_SETTINGS_FILE, # Import APP_SETTINGS_FILE
+    PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM, # Import preview modes
+    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, # Import right click actions
+    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT # Import WC Creator constants
 )
 import json
 import os
 
 logger = logging.getLogger(__name__)
-APP_SETTINGS_FILE = "app_settings.json" # MainWindowと共有
-
-PREVIEW_MODE_FIT = "fit"
-PREVIEW_MODE_ORIGINAL_ZOOM = "original_zoom"
 
 class ThumbnailSizePreviewWidget(QWidget):
     def __init__(self, parent=None):

@@ -30,218 +30,26 @@ from .thumbnail_loader import ThumbnailLoaderThread
 from .thumbnail_delegate import ThumbnailDelegate
 from .metadata_filter_proxy_model import MetadataFilterProxyModel
 from .image_metadata_dialog import ImageMetadataDialog
-from .thumbnail_list_view import ToggleSelectionListView # Import custom ListView
+from .thumbnail_list_view import ToggleSelectionListView
 from .file_operations import FileOperations # Import FileOperations
 from .renamed_files_dialog import RenamedFilesDialog # Import new dialog
-from .full_image_dialog import FullImageDialog # Import the new full image dialog
-from .settings_dialog import SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM # Import settings dialog and constants
-from .drop_window import DropWindow # <--- ★追加: DropWindowをインポート
+from .full_image_dialog import FullImageDialog
+from .settings_dialog import SettingsDialog
+from .drop_window import DropWindow
 from .wc_creator_dialog import WCCreatorDialog
+from .metadata_utils import extract_image_metadata # Import shared metadata extraction
 
 from .constants import (
-    METADATA_ROLE, SELECTION_ORDER_ROLE,
+    APP_SETTINGS_FILE, # Import APP_SETTINGS_FILE
+    METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM, # Import preview modes
     THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT
 )
 
-
 logger = logging.getLogger(__name__)
-
-APP_SETTINGS_FILE = "app_settings.json"
-
 
 class MainWindow(QMainWindow):
     # ----------------------------------------------------------------------
-    # ★★★ START: DropWindow連携のために移植したメタデータ抽出ヘルパーメソッド ★★★
-    # (thumbnail_loader.py から移植・適応)
-    # ----------------------------------------------------------------------
-
-    def _im_decode_exif(self, exif_data):
-        """
-         [移植] Helper function adapted from ImageMover's decode_exif.
-         インスタンスメソッドとして実装 (self を受け取るが、実際には使わない).
-        """
-        if isinstance(exif_data, bytes):
-            try:
-                unicode_start = exif_data.find(b'UNICODE\x00\x00')
-                if unicode_start != -1:
-                    data = exif_data[unicode_start + 8:]
-                    try:
-                        return data.decode('utf-16-be', errors='replace')
-                    except UnicodeDecodeError:
-                        return data.decode('utf-16-le', errors='replace')
-                else:
-                    # Try utf-8 first, then fall back to latin-1 or ascii with replace
-                    try:
-                        return exif_data.decode('utf-8')
-                    except UnicodeDecodeError:
-                        try:
-                            return exif_data.decode('latin-1') # Common for some EXIF data
-                        except UnicodeDecodeError:
-                            return exif_data.decode('ascii', errors='replace')
-            except Exception as e:
-                logger.debug(f"EXIF decode error in _im_decode_exif: {e}")
-        return str(exif_data) # Return as string if decoding fails
-
-    def _im_parse_parameters(self, text, image_path_for_debug=None):
-        """
-         [移植] Helper function adapted from ImageMover's parse_parameters.
-         インスタンスメソッドとして実装 (self を受け取るが、実際には使わない).
-        """
-        params = {
-            'positive_prompt': '',
-            'negative_prompt': '',
-            'generation_info': ''
-        }
-        if not isinstance(text, str):
-            logger.debug(f"_im_parse_parameters received non-string input: {type(text)} for path {image_path_for_debug}")
-            return params
-        try:
-            neg_markers = ['Negative prompt:', 'negative_prompt:', 'neg_prompt:']
-            neg_prompt_start = -1
-            neg_marker_len = 0 # Store the length of the found marker
-            for marker in neg_markers:
-                pos = text.find(marker)
-                if pos != -1:
-                    neg_prompt_start = pos
-                    neg_marker_len = len(marker)
-                    break
-
-            info_markers_priority = ['Steps:']
-            info_markers_fallback = ['Model:', 'Size:', 'Seed:', 'Sampler:', 'CFG scale:', 'Clip skip:']
-
-            steps_start = -1
-
-            # Search for "Steps:" first
-            for marker in info_markers_priority:
-                 # Search after negative prompt, if a negative prompt exists
-                pos = text.find(marker, neg_prompt_start + neg_marker_len if neg_prompt_start != -1 else 0)
-                if pos != -1:
-                    # if neg_prompt_start != -1 and pos < neg_prompt_start + neg_marker_len : # ensure steps_start is after negative prompt
-                    #     continue
-                    steps_start = pos
-                    break
-
-            # If "Steps:" not found, search for other markers
-            if steps_start == -1:
-                search_after_pos = neg_prompt_start + neg_marker_len if neg_prompt_start != -1 else 0
-                for marker in info_markers_fallback:
-                    pos = text.find(marker, search_after_pos)
-                    if pos != -1:
-                        # if neg_prompt_start != -1 and pos < neg_prompt_start + neg_marker_len:
-                        #    continue
-                        if steps_start == -1 or pos < steps_start: # Find the earliest marker
-                            steps_start = pos
-
-            if neg_prompt_start != -1:
-                params['positive_prompt'] = text[:neg_prompt_start].strip()
-                if steps_start != -1 and steps_start > neg_prompt_start: # Ensure steps_start is after neg_prompt
-                    params['negative_prompt'] = text[neg_prompt_start + neg_marker_len : steps_start].strip()
-                    params['generation_info'] = text[steps_start:].strip()
-                else:
-                    params['negative_prompt'] = text[neg_prompt_start + neg_marker_len:].strip()
-            else: # No negative prompt
-                if steps_start != -1:
-                    params['positive_prompt'] = text[:steps_start].strip()
-                    params['generation_info'] = text[steps_start:].strip()
-                else:
-                    params['positive_prompt'] = text.strip()
-
-        except Exception as e:
-            logger.error(f"Error parsing parameters in _im_parse_parameters: {e}", exc_info=True)
-            # Fallback: put the whole text into positive_prompt if parsing fails
-            params['positive_prompt'] = text.strip()
-            params['negative_prompt'] = ""
-            params['generation_info'] = ""
-        return params
-
-    def _extract_metadata_for_file(self, file_path: str) -> dict:
-        """
-        [新規] 指定された単一の画像ファイルからメタデータを抽出する。
-        ThumbnailLoaderThread.extract_image_metadata のロジックを使用する。
-        """
-        if Image is None:
-             logger.error("Pillow (Image) module not loaded. Cannot extract metadata.")
-             return {
-                'positive_prompt': 'ERROR: Pillow not loaded.',
-                'negative_prompt': '',
-                'generation_info': ''
-             }
-
-        extracted_params = {
-            'positive_prompt': '',
-            'negative_prompt': '',
-            'generation_info': ''
-        }
-        raw_text_to_parse = None
-
-        try:
-            with Image.open(file_path) as img:
-                 # Attempt to get 'parameters' from img.info (common for A1111 PNGs)
-                if 'parameters' in img.info and isinstance(img.info['parameters'], str):
-                    raw_text_to_parse = img.info['parameters']
-                    logger.debug(f"Found 'parameters' in info for {file_path}")
-
-                # If not found, try to get 'exif' data from img.info
-                if raw_text_to_parse is None and 'exif' in img.info:
-                    # ここで self. を使ってクラス内のメソッドを呼び出す
-                    decoded_exif_info = self._im_decode_exif(img.info['exif'])
-                    if isinstance(decoded_exif_info, str) and ("Steps:" in decoded_exif_info or "Negative prompt:" in decoded_exif_info or "Seed:" in decoded_exif_info):
-                        raw_text_to_parse = decoded_exif_info
-                        logger.debug(f"Used decoded 'exif' from img.info for {file_path}")
-
-                # For JPEGs and WebPs, Pillow's getexif()
-                if raw_text_to_parse is None and (img.format == "JPEG" or img.format == "WEBP"):
-                    exif_data_obj = img.getexif()
-                    if exif_data_obj:
-                        user_comment = exif_data_obj.get(0x9286) # UserComment
-                        if user_comment:
-                             # ここで self. を使ってクラス内のメソッドを呼び出す
-                            decoded_comment = self._im_decode_exif(user_comment)
-                            if isinstance(decoded_comment, str) and decoded_comment.strip():
-                                raw_text_to_parse = decoded_comment
-                                logger.debug(f"Found UserComment (0x9286) in EXIF for {file_path}")
-
-                        if raw_text_to_parse is None:
-                            image_desc = exif_data_obj.get(0x010e) # ImageDescription
-                            if image_desc:
-                                # ここで self. を使ってクラス内のメソッドを呼び出す
-                                decoded_desc = self._im_decode_exif(image_desc)
-                                if isinstance(decoded_desc, str) and decoded_desc.strip():
-                                    raw_text_to_parse = decoded_desc
-                                    logger.debug(f"Found ImageDescription (0x010e) in EXIF for {file_path}")
-
-                # ComfyUI 'Comment' tEXt chunk as JSON
-                if raw_text_to_parse is None and 'Comment' in img.info:
-                    comment_content = img.info['Comment']
-                    if isinstance(comment_content, str):
-                        try:
-                            comment_json = json.loads(comment_content)
-                            if isinstance(comment_json, dict):
-                                if 'prompt' in comment_json and isinstance(comment_json['prompt'], str):
-                                    raw_text_to_parse = comment_json['prompt']
-                                    logger.debug(f"Used 'prompt' from JSON in Comment for {file_path}")
-                        except json.JSONDecodeError:
-                            # If not JSON, but looks like parameters, use it raw
-                            if ("Steps:" in comment_content or "Negative prompt:" in comment_content or "Seed:" in comment_content):
-                                 raw_text_to_parse = comment_content
-                                 logger.debug(f"Used raw string from Comment for {file_path}")
-
-                # If any text was found, parse it
-                if raw_text_to_parse:
-                     # ここで self. を使ってクラス内のメソッドを呼び出す
-                    extracted_params = self._im_parse_parameters(raw_text_to_parse, file_path)
-                else:
-                    logger.debug(f"No suitable metadata text found to parse in {file_path}")
-
-        except FileNotFoundError:
-            logger.error(f"Metadata extraction: File not found {file_path}")
-        except Exception as e:
-            logger.error(f"Error extracting metadata for {file_path}: {e}", exc_info=True)
-
-        return extracted_params
-    # --------------------------------------------------------------------
-    # ★★★ END: DropWindow連携のために移植したメタデータ抽出ヘルパーメソッド ★★★
     # --------------------------------------------------------------------
 
     def __init__(self):
@@ -1179,7 +987,7 @@ class MainWindow(QMainWindow):
         # 2. キャッシュがなければファイルから抽出
         if metadata_to_show is None:
             logger.info(f"メタデータキャッシュにないため、 '{file_path}' から抽出します。")
-            metadata_to_show = self._extract_metadata_for_file(file_path)
+            metadata_to_show = extract_image_metadata(file_path) # Use shared utility
             self.metadata_cache[file_path] = metadata_to_show # 抽出結果をキャッシュに保存
             logger.debug(f"ファイル '{file_path}' からメタデータを抽出し、キャッシュしました。")
         else:
@@ -1225,7 +1033,7 @@ class MainWindow(QMainWindow):
                             metadata = self.metadata_cache.get(file_path) # 次にキャッシュ
                         if not isinstance(metadata, dict): # キャッシュにもないか、形式が不正
                             logger.warning(f"WC Creator用メタデータ: {file_path} のキャッシュが見つからないため、再抽出します。")
-                            metadata = self._extract_metadata_for_file(file_path)
+                            metadata = extract_image_metadata(file_path) # Use shared utility
                             self.metadata_cache[file_path] = metadata # 抽出したらキャッシュ保存
                         
                         if isinstance(metadata, dict):

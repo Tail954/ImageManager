@@ -4,11 +4,9 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt, QSize, QByteArray
 
-logger = logging.getLogger(__name__)
+from .constants import PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM # Import from constants
 
-# Define constants for preview modes at the module level if they are also used by MainWindow
-PREVIEW_MODE_FIT = "fit"
-PREVIEW_MODE_ORIGINAL_ZOOM = "original_zoom"
+logger = logging.getLogger(__name__)
 
 class FullImageDialog(QDialog):
     def __init__(self, image_path_list, current_index, preview_mode=PREVIEW_MODE_FIT, parent=None):

@@ -7,10 +7,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QUrl  # QUrl を明示的にインポート
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDragMoveEvent, QScreen # QScreenもインポート
 
-logger = logging.getLogger(__name__)
+from .constants import IMAGE_EXTENSIONS # Import from constants
 
-# 対応する画像ファイルの拡張子リスト
-IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp', '.heic', '.heif']
+logger = logging.getLogger(__name__)
 
 class DropWindow(QWidget):
     """
