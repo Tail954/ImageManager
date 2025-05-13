@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox
 )
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QDirIterator, QVariant, QSortFilterProxyModel
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator # <--- ★QDirIterator をインポート
 import os # For path operations
 from pathlib import Path # For path operations
 import json # For settings / metadata parsing
@@ -38,10 +38,11 @@ from .settings_dialog import SettingsDialog
 from .drop_window import DropWindow
 from .wc_creator_dialog import WCCreatorDialog
 from .metadata_utils import extract_image_metadata # Import shared metadata extraction
+from .dialog_manager import DialogManager # Import DialogManager
 
 from .constants import (
-    APP_SETTINGS_FILE, # Import APP_SETTINGS_FILE
-    METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM, # Import preview modes
+    APP_SETTINGS_FILE,
+    METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
     THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT
 )
@@ -55,9 +56,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.thumbnail_loader_thread = None
-        self.metadata_cache = {} # Cache for metadata: {file_path: metadata_dict}
-        self.metadata_dialog_instance = None # To keep track of the metadata dialog
+        self.metadata_cache = {}
+        # self.metadata_dialog_instance = None # DialogManagerが管理
         self.drop_window_instance = None # <--- ★追加: DropWindowのインスタンスを保持
+        self.dialog_manager = DialogManager(self) # DialogManagerのインスタンス化
 
         self.setWindowTitle("ImageManager")
         self.setGeometry(100, 100, 1200, 800)
@@ -73,8 +75,8 @@ class MainWindow(QMainWindow):
         self.file_operations = FileOperations(self) # Initialize FileOperations
         self.progress_dialog = None # For cancellation dialog
         self.initial_dialog_path = None # For storing path from settings
-        self.metadata_dialog_last_geometry = None # To store the last geometry of the metadata dialog
-        self.full_image_dialog_instance = None # To store the single instance of FullImageDialog
+        self.metadata_dialog_last_geometry = None # DialogManagerがMainWindowのこの属性を参照・更新する
+        # self.full_image_dialog_instance = None # DialogManagerが管理する
         self.image_preview_mode = PREVIEW_MODE_FIT # Default, will be overwritten by _load_app_settings
         self.current_sort_key_index = 0 # 0: Filename, 1: Update Date
         self.current_sort_order = Qt.SortOrder.AscendingOrder # Qt.SortOrder.AscendingOrder or Qt.SortOrder.DescendingOrder
@@ -255,7 +257,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection) # This should be fine as QAbstractItemView is imported
         self.thumbnail_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbnail_view.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
-        self.thumbnail_view.item_double_clicked.connect(self.handle_thumbnail_double_clicked) # Connect custom double click signal
+        self.thumbnail_view.item_double_clicked.connect(self.dialog_manager.open_full_image_dialog) # DialogManager経由で呼び出し
 
         self.thumbnail_delegate = ThumbnailDelegate(self.thumbnail_view) # Create delegate instance
         self.thumbnail_view.setItemDelegate(self.thumbnail_delegate) # Set delegate
@@ -264,7 +266,7 @@ class MainWindow(QMainWindow):
                 border: 3px solid orange;
             }
             QListView::item {
-                border: none; 
+                border: none;
             }
         """)
 
@@ -287,7 +289,6 @@ class MainWindow(QMainWindow):
 
 
     def _update_status_bar_info(self):
-         #...(このメソッドの内容は変更なし)...
         if not hasattr(self, 'statusBar') or not self.statusBar:
             return
         total_items = 0
@@ -299,7 +300,6 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage(f"表示アイテム数: {total_items} / 選択アイテム数: {selected_items}")
 
     def _perform_sort(self):
-         #...(このメソッドの内容は変更なし)...
         if not self.source_thumbnail_model:
             logger.warning("_perform_sort called but source_thumbnail_model is None.")
             return
@@ -366,7 +366,6 @@ class MainWindow(QMainWindow):
             self._update_status_bar_info()
 
     def _toggle_sort_order_and_apply(self):
-         #...(このメソッドの内容は変更なし)...
         logger.debug(f"Before toggle: self.current_sort_order = {self.current_sort_order}")
         if self.current_sort_order == Qt.SortOrder.AscendingOrder:
             self.current_sort_order = Qt.SortOrder.DescendingOrder
@@ -379,7 +378,6 @@ class MainWindow(QMainWindow):
         self._apply_sort_and_filter_update()
 
     def _apply_sort_and_filter_update(self):
-         #...(このメソッドの内容は変更なし)...
         self.current_sort_key_index = self.sort_key_combo.currentIndex()
         logger.info(f"Applying sort and filter. Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
         self._perform_sort()
@@ -392,7 +390,7 @@ class MainWindow(QMainWindow):
         # --- 「設定」アクションをメニューバーに直接追加 (以前のまま) ---
         settings_action = QAction("&設定", self)
         settings_action.setStatusTip("アプリケーションの設定を変更します")
-        settings_action.triggered.connect(self._open_settings_dialog)
+        settings_action.triggered.connect(self.dialog_manager.open_settings_dialog) # DialogManager経由で呼び出し
         menu_bar.addAction(settings_action) # メニューバーに直接「設定」を配置
 
         # --- 「ツール」メニューの作成 ---
@@ -403,69 +401,29 @@ class MainWindow(QMainWindow):
         # 「ワイルドカード作成」アクション
         wc_creator_action = QAction("ワイルドカード作成 (&W)", self) # '&W' でアクセスキー W
         wc_creator_action.setStatusTip("選択された画像のプロンプトを整形・出力します。")
-        wc_creator_action.triggered.connect(self._open_wc_creator_dialog)
+        wc_creator_action.triggered.connect(self.dialog_manager.open_wc_creator_dialog) # DialogManager経由で呼び出し
         tool_menu.addAction(wc_creator_action)
 
         # 「D&Dウィンドウ」アクション
         toggle_drop_window_action = QAction("&D＆Dウィンドウ", self) # '&'でショートカットキーヒント
         toggle_drop_window_action.setStatusTip("画像のメタデータを表示するためのドラッグ＆ドロップウィンドウを開きます")
-        # toggle_drop_window_action.setShortcut("Ctrl+D") # 必要であればショートカットを有効化
-        toggle_drop_window_action.triggered.connect(self._toggle_drop_window)
+        toggle_drop_window_action.triggered.connect(self.dialog_manager.toggle_drop_window) # DialogManager経由で呼び出し
         tool_menu.addAction(toggle_drop_window_action) # 「D&Dウィンドウ」をツールメニューの一番下に追加
-    def _open_settings_dialog(self):
-        dialog = SettingsDialog(
-            current_thumbnail_size=self.current_thumbnail_size,
-            available_thumbnail_sizes=self.available_sizes,
-            current_preview_mode=self.image_preview_mode,
-            current_right_click_action=self.thumbnail_right_click_action, # Pass current right-click action
-            current_wc_comment_format=self.wc_creator_comment_format,
-            parent=self
-        )
-        if dialog.exec():
-            new_preview_mode = dialog.get_selected_preview_mode()
-            if self.image_preview_mode != new_preview_mode:
-                self.image_preview_mode = new_preview_mode
-                logger.info(f"画像表示モードが変更されました: {self.image_preview_mode}")
 
-            new_right_click_action = dialog.get_selected_right_click_action()
-            if self.thumbnail_right_click_action != new_right_click_action:
-                self.thumbnail_right_click_action = new_right_click_action
-                logger.info(f"サムネイル右クリック時の動作が変更されました: {self.thumbnail_right_click_action}")
+    def _save_settings(self):
+        """現在の設定をJSONファイルに保存する。"""
+        self.app_settings["thumbnail_size"] = self.current_thumbnail_size
+        self.app_settings["image_preview_mode"] = self.image_preview_mode
+        self.app_settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.thumbnail_right_click_action
+        self.app_settings[WC_COMMENT_OUTPUT_FORMAT] = self.wc_creator_comment_format
+        self.app_settings["last_folder_path"] = self.current_folder_path
+        self.app_settings["recursive_search"] = self.recursive_search_enabled
+        self.app_settings["sort_key_index"] = self.current_sort_key_index
+        self.app_settings["sort_order"] = self.current_sort_order.value
 
-            new_wc_format = dialog.get_selected_wc_comment_format()
-            if self.wc_creator_comment_format != new_wc_format:
-                self.wc_creator_comment_format = new_wc_format
-                logger.info(f"WC Creator コメント出力形式が変更されました: {self.wc_creator_comment_format}")
-                
-            new_thumbnail_size = dialog.get_selected_thumbnail_size()
-            old_thumbnail_size = self.current_thumbnail_size
-            if new_thumbnail_size != old_thumbnail_size:
-                msg_box = QMessageBox(self)
-                msg_box.setIcon(QMessageBox.Icon.Question)
-                msg_box.setWindowTitle("サムネイルサイズ変更の確認")
-                msg_box.setText(f"サムネイルサイズを {new_thumbnail_size}px に変更しますか？\n"
-                                 "表示中の全サムネイルが再生成されます。\n"
-                                 "画像の枚数によっては時間がかかる場合があります。")
-                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-                msg_box.setDefaultButton(QMessageBox.StandardButton.Ok)
-                reply = msg_box.exec()
-                if reply == QMessageBox.StandardButton.Ok:
-                    logger.info(f"ユーザーがサムネイルサイズ変更を承認: {old_thumbnail_size}px -> {new_thumbnail_size}px")
-                    if self.apply_thumbnail_size_change(new_thumbnail_size):
-                        logger.info(f"サムネイルサイズが {self.current_thumbnail_size}px に適用されました。")
-                    else:
-                         logger.warning(f"サムネイルサイズ変更 {new_thumbnail_size}px の適用に失敗、または変更なし。")
-                else:
-                    logger.info("ユーザーがサムネイルサイズ変更をキャンセルしました。")
-
-            self._save_settings() # ★★★ 全設定を_save_settingsメソッド経由で保存 ★★★
-            logger.info("設定ダイアログがOKで閉じられました。設定を保存しました。")
-        else:
-            logger.info("設定ダイアログがキャンセルされました。変更は保存されません。")
-
+        self._write_app_settings_file(self.app_settings)
 
     def _read_app_settings_file(self):
-         #...(このメソッドの内容は変更なし)...
         try:
             if os.path.exists(APP_SETTINGS_FILE):
                 with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
@@ -475,7 +433,19 @@ class MainWindow(QMainWindow):
             logger.error(f"Error reading {APP_SETTINGS_FILE} in MainWindow: {e}")
         return {}
 
-    def _write_app_settings_file(self, settings_dict):
+    def _write_app_settings_file(self, settings_dict=None): # settings_dict引数を追加
+        # settings_dictがNoneの場合（_save_settingsから呼ばれない場合）は、現在の状態から作成
+        if settings_dict is None:
+            settings_dict = {
+                "thumbnail_size": self.current_thumbnail_size,
+                "image_preview_mode": self.image_preview_mode,
+                THUMBNAIL_RIGHT_CLICK_ACTION: self.thumbnail_right_click_action,
+                WC_COMMENT_OUTPUT_FORMAT: self.wc_creator_comment_format,
+                "last_folder_path": self.current_folder_path,
+                "recursive_search": self.recursive_search_enabled,
+                "sort_key_index": self.current_sort_key_index,
+                "sort_order": self.current_sort_order.value
+            }
         try:
             with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(settings_dict, f, indent=4)
@@ -485,18 +455,18 @@ class MainWindow(QMainWindow):
 
     def _load_app_settings(self):
         """アプリケーション全体の設定を読み込み、UI要素に反映する"""
-        settings = self._read_app_settings_file()
-        
+        self.app_settings = self._read_app_settings_file() # self.app_settings に読み込み結果を格納
+
         # 画像表示モード
-        self.image_preview_mode = settings.get("image_preview_mode", PREVIEW_MODE_FIT)
+        self.image_preview_mode = self.app_settings.get("image_preview_mode", PREVIEW_MODE_FIT)
         logger.info(f"読み込まれた画像表示モード: {self.image_preview_mode}")
 
         # サムネイル右クリック動作
-        self.thumbnail_right_click_action = settings.get(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
+        self.thumbnail_right_click_action = self.app_settings.get(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
         logger.info(f"読み込まれたサムネイル右クリック動作: {self.thumbnail_right_click_action}")
 
         # サムネイルサイズ
-        loaded_thumbnail_size = settings.get("thumbnail_size", self.available_sizes[1])
+        loaded_thumbnail_size = self.app_settings.get("thumbnail_size", self.available_sizes[1])
         if loaded_thumbnail_size in self.available_sizes:
             self.current_thumbnail_size = loaded_thumbnail_size
         else:
@@ -505,11 +475,11 @@ class MainWindow(QMainWindow):
         logger.info(f"読み込まれたサムネイルサイズ: {self.current_thumbnail_size}px")
 
         # WC Creator コメント形式
-        self.wc_creator_comment_format = settings.get(WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT)
+        self.wc_creator_comment_format = self.app_settings.get(WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT)
         logger.info(f"読み込まれたWC Creatorコメント形式: {self.wc_creator_comment_format}")
 
         # 最終フォルダパス
-        if lp_val := settings.get("last_folder_path"):
+        if lp_val := self.app_settings.get("last_folder_path"):
             if os.path.isdir(lp_val):
                 self.initial_dialog_path = lp_val
                 logger.info(f"前回終了時のフォルダパスを読み込みました: {self.initial_dialog_path}")
@@ -517,15 +487,15 @@ class MainWindow(QMainWindow):
                 logger.warning(f"保存されたフォルダパスが無効または見つかりません: {lp_val}")
 
         # 再帰検索設定
-        self.recursive_search_enabled = settings.get("recursive_search", True)
-        if hasattr(self, 'recursive_toggle_button') and self.recursive_toggle_button:
+        self.recursive_search_enabled = self.app_settings.get("recursive_search", True)
+        if hasattr(self, 'recursive_toggle_button') and self.recursive_toggle_button: # UI要素が存在すれば更新
             self.recursive_toggle_button.setChecked(self.recursive_search_enabled)
             self.recursive_toggle_button.setText(f"サブフォルダ検索: {'ON' if self.recursive_search_enabled else 'OFF'}")
         logger.info(f"再帰検索設定を読み込みました: {'ON' if self.recursive_search_enabled else 'OFF'}")
 
         # ソート設定
-        self.current_sort_key_index = settings.get("sort_key_index", 0)
-        if hasattr(self, 'sort_key_combo') and self.sort_key_combo:
+        self.current_sort_key_index = self.app_settings.get("sort_key_index", 0)
+        if hasattr(self, 'sort_key_combo') and self.sort_key_combo: # UI要素が存在すれば更新
             if 0 <= self.current_sort_key_index < self.sort_key_combo.count():
                 self.sort_key_combo.setCurrentIndex(self.current_sort_key_index)
             else:
@@ -533,13 +503,13 @@ class MainWindow(QMainWindow):
                 self.current_sort_key_index = 0
                 self.sort_key_combo.setCurrentIndex(0)
 
-        self.current_sort_order = Qt.SortOrder(settings.get("sort_order", Qt.SortOrder.AscendingOrder.value))
-        if hasattr(self, 'sort_order_button') and self.sort_order_button:
+        self.current_sort_order = Qt.SortOrder(self.app_settings.get("sort_order", Qt.SortOrder.AscendingOrder.value))
+        if hasattr(self, 'sort_order_button') and self.sort_order_button: # UI要素が存在すれば更新
             self.sort_order_button.setText("降順 ▼" if self.current_sort_order == Qt.SortOrder.DescendingOrder else "昇順 ▲")
         logger.info(f"ソート設定を読み込みました: Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
 
+
     def select_folder(self):
-         #...(このメソッドの内容は変更なし)...
         start_dir = ""
         if self.current_folder_path and os.path.isdir(self.current_folder_path):
             start_dir = self.current_folder_path
@@ -551,7 +521,6 @@ class MainWindow(QMainWindow):
             self.update_folder_tree(folder_path)
 
     def update_folder_tree(self, folder_path):
-         #...(このメソッドの内容は変更なし)...
         self.current_folder_path = folder_path
         parent_dir = QDir(folder_path)
         root_display_path = folder_path
@@ -573,7 +542,6 @@ class MainWindow(QMainWindow):
             self._try_delete_empty_subfolders(folder_path)
 
     def on_folder_tree_clicked(self, index):
-         #...(このメソッドの内容は変更なし)...
         path = self.file_system_model.filePath(index)
         if self.file_system_model.isDir(index):
             logger.info(f"フォルダがクリックされました: {path}")
@@ -585,13 +553,13 @@ class MainWindow(QMainWindow):
             logger.debug(f"ファイルがクリックされました: {path}")
 
     def load_thumbnails_from_folder(self, folder_path):
-         #...(このメソッドの内容は変更なし)...
         if ImageQt is None:
             self.statusBar.showMessage("ImageQtモジュールが見つかりません。処理を中止します。", 5000)
             logger.error("ImageQt module not found. Cannot load thumbnails.")
             return
         logger.info(f"{folder_path} からサムネイルを読み込みます。")
         self.load_start_time = time.time()
+        items_for_thread = [] # <--- ★items_for_thread を try の前に初期化
         image_files = []
         try:
             search_flags = QDirIterator.IteratorFlag.Subdirectories if self.recursive_search_enabled else QDirIterator.IteratorFlag.NoIteratorFlags
@@ -622,7 +590,7 @@ class MainWindow(QMainWindow):
             placeholder_pixmap = QPixmap(self.current_thumbnail_size, self.current_thumbnail_size)
             placeholder_pixmap.fill(Qt.GlobalColor.transparent)
             placeholder_icon = QIcon(placeholder_pixmap)
-            items_for_thread = []
+            # items_for_thread = [] # 初期化を try の前に移動
             for f_path in image_files:
                 item = QStandardItem()
                 item.setIcon(placeholder_icon)
@@ -662,13 +630,11 @@ class MainWindow(QMainWindow):
             self.sort_order_button.setEnabled(True)
 
     def handle_recursive_search_toggled(self, checked):
-         #...(このメソッドの内容は変更なし)...
         self.recursive_search_enabled = checked
         self.recursive_toggle_button.setText(f"サブフォルダ検索: {'ON' if checked else 'OFF'}")
         logger.info(f"再帰検索設定変更: {'ON' if checked else 'OFF'}. 次回フォルダ読み込み時に適用されます。")
 
     def apply_thumbnail_size_change(self, new_size):
-         #...(このメソッドの内容は変更なし)...
         if self.is_loading_thumbnails:
             logger.info("現在サムネイル読み込み中のため、サイズ変更はスキップされました。")
             return False
@@ -692,11 +658,9 @@ class MainWindow(QMainWindow):
             return False
 
     def update_progress_bar(self, processed_count, total_files):
-         #...(このメソッドの内容は変更なし)...
         self.statusBar.showMessage(f"サムネイル読み込み中... {processed_count}/{total_files}")
 
     def update_thumbnail_item(self, item, q_image, metadata):
-         #...(このメソッドの内容は変更なし)...
         if ImageQt is None: return
         if not item:
             logger.error("update_thumbnail_item received a None item.")
@@ -723,7 +687,6 @@ class MainWindow(QMainWindow):
             item.setToolTip(f"場所: {directory_path}")
 
     def on_thumbnail_loading_finished(self):
-         #...(このメソッドの内容は変更なし)...
         logger.info("サムネイルの非同期読み込みが完了しました。")
         self.statusBar.showMessage("サムネイル読み込み完了", 5000)
         self.is_loading_thumbnails = False
@@ -750,7 +713,6 @@ class MainWindow(QMainWindow):
             self.load_start_time = None
 
     def handle_thumbnail_selection_changed(self, selected, deselected):
-         #...(このメソッドの内容は変更なし)...
         if self.is_copy_mode:
             selected_items_now_list = []
             for proxy_idx in self.thumbnail_view.selectionModel().selectedIndexes():
@@ -811,7 +773,6 @@ class MainWindow(QMainWindow):
         self._update_status_bar_info()
 
     def select_all_thumbnails(self):
-         #...(このメソッドの内容は変更なし)...
         if self.thumbnail_view.model() and self.thumbnail_view.model().rowCount() > 0:
             self.thumbnail_view.selectAll()
             logger.info("すべての表示中サムネイルを選択しました。")
@@ -820,13 +781,11 @@ class MainWindow(QMainWindow):
         self._update_status_bar_info()
 
     def deselect_all_thumbnails(self):
-         #...(このメソッドの内容は変更なし)...
         self.thumbnail_view.clearSelection()
         logger.info("すべてのサムネイルの選択を解除しました。")
         self._update_status_bar_info()
 
     def apply_filters(self, preserve_selection=False):
-         #...(このメソッドの内容は変更なし)...
         if not preserve_selection:
             self.deselect_all_thumbnails()
         if self.filter_proxy_model:
@@ -840,168 +799,7 @@ class MainWindow(QMainWindow):
             logger.debug("Filter proxy model not yet initialized for apply_filters call.")
         self._update_status_bar_info()
 
-    def handle_metadata_requested(self, proxy_index):
-         #...(このメソッドの内容は変更なし)...
-        if not proxy_index.isValid():
-            logger.debug("handle_metadata_requested: Received invalid proxy_index.")
-            return
-        source_index = self.filter_proxy_model.mapToSource(proxy_index)
-        item = self.source_thumbnail_model.itemFromIndex(source_index)
-        if not item:
-            logger.debug(f"handle_metadata_requested: Could not get item from source_index {source_index.row()},{source_index.column()}.")
-            return
-        file_path = item.data(Qt.ItemDataRole.UserRole)
-        if not file_path:
-            logger.warning(f"handle_metadata_requested: No file path associated with item at proxy_index {proxy_index.row()},{proxy_index.column()}.")
-            return
-        data_from_item = item.data(METADATA_ROLE)
-        final_metadata_to_show = {}
-        if isinstance(data_from_item, dict):
-            final_metadata_to_show = data_from_item
-        else:
-            cached_metadata = self.metadata_cache.get(file_path)
-            if isinstance(cached_metadata, dict):
-                final_metadata_to_show = cached_metadata
-            else:
-                logger.warning(f"Metadata for {file_path} not found or not a dict in cache either. Type: {type(cached_metadata)}. Using empty dict.")
-        if not isinstance(final_metadata_to_show, dict):
-            logger.error(f"CRITICAL - final_metadata_to_show is NOT a dict for {file_path}! Type: {type(final_metadata_to_show)}. Forcing empty dict.")
-            final_metadata_to_show = {}
-        self.show_metadata_dialog_for_item(final_metadata_to_show, file_path)
-
-
-    def show_metadata_dialog_for_item(self, metadata_dict, item_file_path_for_debug=None):
-         #...(このメソッドの内容は変更なし)...
-        if self.metadata_dialog_instance is None:
-            self.metadata_dialog_instance = ImageMetadataDialog(metadata_dict, self, item_file_path_for_debug)
-            self.metadata_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-            self.metadata_dialog_instance.finished.connect(self._on_metadata_dialog_finished)
-            if self.metadata_dialog_last_geometry:
-                 try:
-                     screen_rect = QApplication.primaryScreen().availableGeometry()
-                     if screen_rect.intersects(self.metadata_dialog_last_geometry):
-                         self.metadata_dialog_instance.setGeometry(self.metadata_dialog_last_geometry)
-                     else:
-                         logger.warning("Last metadata dialog geometry is off-screen, centering instead.")
-                 except Exception:
-                      logger.warning("Could not get screen geometry, restoring last dialog geometry without check.")
-                      self.metadata_dialog_instance.setGeometry(self.metadata_dialog_last_geometry)
-            self.metadata_dialog_instance.show()
-        else:
-            self.metadata_dialog_instance.update_metadata(metadata_dict, item_file_path_for_debug)
-            if not self.metadata_dialog_instance.isVisible():
-                self.metadata_dialog_instance.show()
-        self.metadata_dialog_instance.raise_()
-        self.metadata_dialog_instance.activateWindow()
-
-    def _on_metadata_dialog_finished(self, result):
-         #...(このメソッドの内容は変更なし)...
-        sender_dialog = self.sender()
-        if sender_dialog == self.metadata_dialog_instance:
-            if isinstance(sender_dialog, QDialog):
-                 self.metadata_dialog_last_geometry = sender_dialog.geometry()
-                 logger.debug(f"Metadata dialog closed. Stored geometry: {self.metadata_dialog_last_geometry}")
-            self.metadata_dialog_instance = None
-
-    def _on_full_image_dialog_finished(self):
-         #...(このメソッドの内容は変更なし)...
-        if self.sender() == self.full_image_dialog_instance:
-            logger.debug("FullImageDialog closed, clearing instance reference.")
-            self.full_image_dialog_instance = None
-
-    def handle_thumbnail_double_clicked(self, proxy_index):
-         #...(このメソッドの内容は変更なし)...
-        if not proxy_index.isValid(): return
-        source_index = self.filter_proxy_model.mapToSource(proxy_index)
-        item = self.source_thumbnail_model.itemFromIndex(source_index)
-        if not item: return
-        file_path = item.data(Qt.ItemDataRole.UserRole)
-        if not file_path: return
-        logger.info(f"Thumbnail double-clicked: {file_path}")
-        visible_image_paths = []
-        for row in range(self.filter_proxy_model.rowCount()):
-            proxy_idx = self.filter_proxy_model.index(row, 0)
-            source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
-            item_ = self.source_thumbnail_model.itemFromIndex(source_idx)
-            if item_:
-                visible_image_paths.append(item_.data(Qt.ItemDataRole.UserRole))
-        current_idx_in_visible_list = -1
-        if file_path in visible_image_paths:
-            current_idx_in_visible_list = visible_image_paths.index(file_path)
-        else:
-             logger.error(f"Double-clicked file path {file_path} not found in visible items list.")
-             return
-        try:
-            if self.full_image_dialog_instance is None:
-                logger.debug(f"No existing FullImageDialog instance, creating new one with mode: {self.image_preview_mode}")
-                self.full_image_dialog_instance = FullImageDialog(
-                    visible_image_paths,
-                    current_idx_in_visible_list,
-                    preview_mode=self.image_preview_mode, # Pass the preview mode
-                    parent=self
-                )
-                self.full_image_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-                self.full_image_dialog_instance.finished.connect(self._on_full_image_dialog_finished)
-                self.full_image_dialog_instance.show()
-            else:
-                logger.debug(f"Existing FullImageDialog instance found, updating image list, index, and mode: {self.image_preview_mode}")
-                self.full_image_dialog_instance.update_image(visible_image_paths, current_idx_in_visible_list)
-        except Exception as e:
-            logger.error(f"Error opening or updating full image dialog for {file_path}: {e}", exc_info=True)
-            QMessageBox.critical(self, "画像表示エラー", f"画像ダイアログの表示・更新中にエラーが発生しました:\n{e}")
-            if self.full_image_dialog_instance:
-                self.full_image_dialog_instance.close()
-                self.full_image_dialog_instance = None
-
     # --- ★★★ START: DropWindow連携メソッド ★★★ ---
-    def _toggle_drop_window(self):
-        """
-        [新規]ドラッグアンドドロップウィンドウの表示/非表示を切り替える。
-        """
-        # 初回呼び出し時にインスタンスを作成 (遅延初期化)
-        if self.drop_window_instance is None:
-            logger.info("DropWindowのインスタンスを初めて作成します。")
-            self.drop_window_instance = DropWindow(main_window=self)
-
-        # 表示/非表示をトグル
-        if self.drop_window_instance.isVisible():
-            logger.debug("DropWindowを非表示にします。")
-            self.drop_window_instance.hide()
-        else:
-            logger.debug("DropWindowを表示します。")
-            self.drop_window_instance.show() # DropWindow.showEvent()で位置調整される
-
-    def show_metadata_for_dropped_file(self, file_path: str):
-        """
-        [新規] DropWindowから呼び出され、指定されたファイルのメタデータを表示する。
-        """
-        logger.info(f"DropWindowからファイル '{file_path}' のメタデータ表示要求。")
-        if not os.path.isfile(file_path):
-            logger.warning(f"指定されたパス '{file_path}' はファイルではありません。メタデータを表示できません。")
-            QMessageBox.warning(self, "エラー", f"指定されたパスはファイルではありません:\n{file_path}")
-            return
-
-        # 1. キャッシュを確認
-        metadata_to_show = self.metadata_cache.get(file_path)
-
-        # 2. キャッシュがなければファイルから抽出
-        if metadata_to_show is None:
-            logger.info(f"メタデータキャッシュにないため、 '{file_path}' から抽出します。")
-            metadata_to_show = extract_image_metadata(file_path) # Use shared utility
-            self.metadata_cache[file_path] = metadata_to_show # 抽出結果をキャッシュに保存
-            logger.debug(f"ファイル '{file_path}' からメタデータを抽出し、キャッシュしました。")
-        else:
-            logger.debug(f"ファイル '{file_path}' のメタデータをキャッシュから使用します。")
-
-        if not isinstance(metadata_to_show, dict):
-             logger.error(f"表示すべきメタデータが辞書型ではありません (型: {type(metadata_to_show)})。ファイル: {file_path}")
-             metadata_to_show = {"Error": f"内部エラー: メタデータ形式不正。"}
-
-        # 3. 既存のダイアログ表示メソッドを呼び出す
-        self.show_metadata_dialog_for_item(
-             metadata_to_show,
-             item_file_path_for_debug=file_path
-             )
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
 
     def _open_wc_creator_dialog(self):
@@ -1015,26 +813,22 @@ class MainWindow(QMainWindow):
         selected_files_for_wc = []
         metadata_for_wc = []
 
-        # 選択された順序を保持するために、インデックスではなくアイテムのリストから処理する方が良いが、
-        # QListViewの選択モデルはインデックスのリストを返す。
-        # 順序が重要でない場合はこのままで良い。重要なら追加の工夫が必要。
-        # 今回は選択順は考慮しない。
-        processed_paths = set() # 重複処理を避けるため（通常QModelIndexは重複しないが念のため）
+        processed_paths = set()
 
         for proxy_idx in selected_proxy_indexes:
-            if proxy_idx.column() == 0: # 最初のカラムのインデックスのみを処理 (通常はそうだが念のため)
+            if proxy_idx.column() == 0:
                 source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
                 item = self.source_thumbnail_model.itemFromIndex(source_idx)
                 if item:
                     file_path = item.data(Qt.ItemDataRole.UserRole)
                     if file_path and file_path not in processed_paths:
-                        metadata = item.data(METADATA_ROLE) # まずアイテムから取得試行
-                        if not isinstance(metadata, dict): # アイテムにないか、形式が不正
-                            metadata = self.metadata_cache.get(file_path) # 次にキャッシュ
-                        if not isinstance(metadata, dict): # キャッシュにもないか、形式が不正
+                        metadata = item.data(METADATA_ROLE)
+                        if not isinstance(metadata, dict):
+                            metadata = self.metadata_cache.get(file_path)
+                        if not isinstance(metadata, dict):
                             logger.warning(f"WC Creator用メタデータ: {file_path} のキャッシュが見つからないため、再抽出します。")
-                            metadata = extract_image_metadata(file_path) # Use shared utility
-                            self.metadata_cache[file_path] = metadata # 抽出したらキャッシュ保存
+                            metadata = extract_image_metadata(file_path)
+                            self.metadata_cache[file_path] = metadata
                         
                         if isinstance(metadata, dict):
                             selected_files_for_wc.append(file_path)
@@ -1048,20 +842,17 @@ class MainWindow(QMainWindow):
             return
 
         logger.info(f"{len(selected_files_for_wc)} 個の画像をWC Creatorに渡します。")
-        # WCCreatorDialogのインスタンスを作成して表示
-        # このダイアログはモーダルで表示するのが一般的かもしれない
         wc_dialog = WCCreatorDialog(
             selected_file_paths=selected_files_for_wc,
             metadata_list=metadata_for_wc,
             output_format=self.wc_creator_comment_format,
             parent=self
         )
-        wc_dialog.exec() # モーダルで表示
+        wc_dialog.exec()
         logger.info("プロンプト整形ツールを閉じました。")
 
     # --- File Operation Handlers ---
     def _handle_copy_mode_toggled(self, checked):
-         #...(このメソッドの内容は変更なし)...
         self.is_copy_mode = checked
         if checked:
             self.copy_mode_button.setText("Copy Mode Exit")
@@ -1087,7 +878,6 @@ class MainWindow(QMainWindow):
                          self.thumbnail_view.update(proxy_idx)
 
     def _handle_move_files_button_clicked(self):
-         #...(このメソッドの内容は変更なし)...
         logger.debug(f"Move files button clicked. Selected files: {self.selected_file_paths}")
         if not self.selected_file_paths:
             logger.info("移動するファイルが選択されていません。")
@@ -1115,7 +905,6 @@ class MainWindow(QMainWindow):
             logger.info("移動先フォルダの選択がキャンセルされました。")
 
     def _handle_copy_files_button_clicked(self):
-         #...(このメソッドの内容は変更なし)...
         logger.debug(f"Copy files button clicked. Copy selection order: {[item.data(Qt.ItemDataRole.UserRole) for item in self.copy_selection_order]}")
         if not self.copy_selection_order:
             logger.info("コピーするファイルが選択されていません (選択順)。")
@@ -1141,7 +930,6 @@ class MainWindow(QMainWindow):
             logger.info("コピー先フォルダの選択がキャンセルされました。")
 
     def _set_file_op_buttons_enabled(self, enabled):
-         #...(このメソッドの内容は変更なし)...
         self.move_files_button.setEnabled(enabled and not self.is_copy_mode)
         self.copy_files_button.setEnabled(enabled and self.is_copy_mode)
         self.copy_mode_button.setEnabled(enabled)
@@ -1149,12 +937,10 @@ class MainWindow(QMainWindow):
         self.folder_tree_view.setEnabled(enabled)
 
     def _handle_cancel_op_button_clicked(self):
-         #...(このメソッドの内容は変更なし)...
         logger.info("Cancel button clicked. Requesting to stop file operation.")
         self.file_operations.stop_operation()
 
     def _handle_file_op_progress(self, processed_count, total_count):
-         #...(このメソッドの内容は変更なし)...
         dialog = self.progress_dialog
         if dialog:
             if dialog.wasCanceled():
@@ -1170,7 +956,6 @@ class MainWindow(QMainWindow):
             logger.debug(f"Progress update ({processed_count}/{total_count}) received but self.progress_dialog was already None.")
 
     def _handle_file_op_error(self, error_message):
-         #...(このメソッドの内容は変更なし)...
         logger.error(f"File operation error: {error_message}")
         if self.progress_dialog:
             self.progress_dialog.close()
@@ -1180,7 +965,6 @@ class MainWindow(QMainWindow):
         self._set_file_op_buttons_enabled(True)
 
     def _handle_file_op_finished(self, result):
-         #...(このメソッドの内容は変更なし)...
         logger.info(f"File operation finished. Result: {result}")
         if self.progress_dialog:
             self.progress_dialog.close()
@@ -1227,7 +1011,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "移動エラー", "以下のエラーが発生しました:\n" + "\n".join(errors))
             if moved_count > 0:
                  self.statusBar.showMessage(f"{moved_count}個のファイルを移動しました。", 5000)
-                 # NOTE: Simplified message logic for now, removed the relative path check/message
             elif not errors:
                  self.statusBar.showMessage("移動するファイルがありませんでした、または処理が完了しました。", 3000)
             elif errors and moved_count == 0:
@@ -1240,7 +1023,6 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(f"{copied_count}個のファイルをコピーしました。", 5000)
             elif not errors:
                 self.statusBar.showMessage("コピーするファイルがありませんでした、または処理が完了しました。", 3000)
-        # General cleanup
         if status == 'completed' and not errors:
             self.deselect_all_thumbnails()
             if operation_type == "copy":
@@ -1252,7 +1034,6 @@ class MainWindow(QMainWindow):
                         if proxy_idx.isValid():
                             self.thumbnail_view.update(proxy_idx)
                 self.copy_selection_order.clear()
-            # Empty subfolder check
             if operation_type == "move" and status == 'completed' and not errors:
                 source_folders_to_check = set()
                 if successfully_moved_src_paths:
@@ -1270,64 +1051,7 @@ class MainWindow(QMainWindow):
                         logger.debug(f"空フォルダチェックをスキップ: '{folder_to_check}' は存在しないかDirではありません。")
 
 
-    def _save_settings(self):
-        """アプリケーション終了時や設定変更時に設定を保存する"""
-        settings = self._read_app_settings_file() # 既存の設定を読み込むのが良い
-        
-        # 更新する値を設定
-        settings["last_folder_path"] = self.current_folder_path
-        settings["recursive_search"] = self.recursive_search_enabled
-        settings["image_preview_mode"] = self.image_preview_mode
-        settings["thumbnail_size"] = self.current_thumbnail_size
-        settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.thumbnail_right_click_action
-        settings["sort_key_index"] = self.current_sort_key_index
-        settings["sort_order"] = self.current_sort_order.value # enumの値を保存
-        settings[WC_COMMENT_OUTPUT_FORMAT] = self.wc_creator_comment_format # ★★★ WC Creator設定保存 ★★★
-
-        self._write_app_settings_file(settings)
-
-    # self._load_app_settings()に統合
-    # def _load_settings(self):
-    #     try:
-    #         if os.path.exists(APP_SETTINGS_FILE):
-    #             with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-    #                 settings = json.load(f)
-    #             last_folder_path = settings.get("last_folder_path")
-    #             if last_folder_path and os.path.isdir(last_folder_path):
-    #                 logger.info(f"前回終了時のフォルダパスを読み込みました: {last_folder_path} (ダイアログ初期位置用)")
-    #                 self.initial_dialog_path = last_folder_path
-    #             else:
-    #                 if last_folder_path:
-    #                      logger.warning(f"保存されたフォルダパスが無効または見つかりません: {last_folder_path}")
-    #             recursive_enabled_from_settings = settings.get("recursive_search")
-    #             if isinstance(recursive_enabled_from_settings, bool):
-    #                 self.recursive_toggle_button.setChecked(recursive_enabled_from_settings)
-    #                 logger.info(f"再帰検索設定を読み込みました: {'ON' if recursive_enabled_from_settings else 'OFF'}")
-    #             loaded_sort_key_index = settings.get("sort_key_index", 0)
-    #             if 0 <= loaded_sort_key_index < self.sort_key_combo.count():
-    #                 self.current_sort_key_index = loaded_sort_key_index
-    #                 self.sort_key_combo.setCurrentIndex(self.current_sort_key_index)
-    #             else:
-    #                 logger.warning(f"保存されたソートキーインデックスが無効: {loaded_sort_key_index}")
-    #             loaded_sort_order_int = settings.get("sort_order", Qt.SortOrder.AscendingOrder.value)
-    #             self.current_sort_order = Qt.SortOrder(loaded_sort_order_int)
-    #             if self.current_sort_order == Qt.SortOrder.AscendingOrder:
-    #                 self.sort_order_button.setText("昇順 ▲")
-    #             else:
-    #                 self.sort_order_button.setText("降順 ▼")
-    #             logger.info(f"ソート設定を読み込みました: Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
-    #         else:
-    #             logger.info(f"設定ファイルが見つかりません ({APP_SETTINGS_FILE})。デフォルト状態で起動します。")
-    #     except json.JSONDecodeError as e:
-    #         logger.error(f"設定ファイルの読み込み中にJSONデコードエラーが発生しました: {e}", exc_info=True)
-    #     except IOError as e:
-    #          logger.error(f"設定ファイルの読み込み中にIOエラーが発生しました: {e}", exc_info=True)
-    #     except Exception as e:
-    #         logger.error(f"設定の読み込み中に予期せぬエラーが発生しました: {e}", exc_info=True)
-
-
     def _try_delete_empty_subfolders(self, target_folder_path):
-         #...(このメソッドの内容は変更なし)...
         if not target_folder_path or not os.path.isdir(target_folder_path):
             logger.debug(f"指定されたフォルダパス '{target_folder_path}' が無効なため、空フォルダ削除をスキップします。")
             return
@@ -1344,7 +1068,6 @@ class MainWindow(QMainWindow):
         self._handle_send_empty_folders_to_trash(target_folder_path, empty_folders)
 
     def _handle_send_empty_folders_to_trash(self, parent_folder_path_for_context, empty_folders_to_delete):
-         #...(このメソッドの内容は変更なし)...
         logger.debug(f"_handle_send_empty_folders_to_trash called for parent '{parent_folder_path_for_context}' with {len(empty_folders_to_delete)} folders.")
         if not empty_folders_to_delete:
             logger.info("削除対象の空フォルダがありません。")
@@ -1400,7 +1123,6 @@ class MainWindow(QMainWindow):
              logger.info(f"'{parent_folder_path_for_context}' 内の空のサブフォルダのゴミ箱への移動はキャンセルされました。")
 
     def _find_empty_subfolders(self, parent_dir):
-         #...(このメソッドの内容は変更なし)...
         empty_folders = []
         for entry in os.scandir(parent_dir):
             if entry.is_dir():
@@ -1409,7 +1131,6 @@ class MainWindow(QMainWindow):
         return empty_folders
 
     def _is_dir_empty_recursive(self, dir_path):
-         #...(このメソッドの内容は変更なし)...
         try:
             entries = list(os.scandir(dir_path))
         except OSError as e:
@@ -1431,11 +1152,11 @@ class MainWindow(QMainWindow):
         self._save_settings()
 
         # --- ★追加★ ---
-        # DropWindowインスタンスが存在すれば、閉じる
-        if self.drop_window_instance:
+        # DialogManagerが管理するDropWindowインスタンスが存在すれば、閉じる
+        if self.dialog_manager.drop_window_instance: # DialogManagerのインスタンスを参照
              try:
                  logger.debug("DropWindowインスタンスを閉じます。")
-                 self.drop_window_instance.close()
+                 self.dialog_manager.drop_window_instance.close() # DialogManager経由で閉じる
              except Exception as e:
                  logger.error(f"DropWindowインスタンスのクローズ中にエラー: {e}")
         # --- ★追加 終わり★ ---
@@ -1458,16 +1179,15 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _show_thumbnail_context_menu(self, pos):
-         #...(このメソッドの内容は変更なし)...
         proxy_index = self.thumbnail_view.indexAt(pos)
         if not proxy_index.isValid():
             return
         if self.thumbnail_right_click_action == RIGHT_CLICK_ACTION_METADATA:
-            self.handle_metadata_requested(proxy_index)
+            self.dialog_manager.open_metadata_dialog(proxy_index) # DialogManager経由で呼び出し
         elif self.thumbnail_right_click_action == RIGHT_CLICK_ACTION_MENU:
             menu = QMenu(self)
             metadata_action = QAction("メタデータを表示", self)
-            metadata_action.triggered.connect(lambda: self.handle_metadata_requested(proxy_index))
+            metadata_action.triggered.connect(lambda: self.dialog_manager.open_metadata_dialog(proxy_index)) # DialogManager経由
             menu.addAction(metadata_action)
             open_location_action = QAction("ファイルの場所を開く", self)
             open_location_action.triggered.connect(lambda: self._open_file_location_for_item(proxy_index))
@@ -1475,10 +1195,9 @@ class MainWindow(QMainWindow):
             menu.exec(self.thumbnail_view.viewport().mapToGlobal(pos))
         else:
             logger.warning(f"不明なサムネイル右クリック動作設定: {self.thumbnail_right_click_action}")
-            self.handle_metadata_requested(proxy_index)
+            self.dialog_manager.open_metadata_dialog(proxy_index) # DialogManager経由で呼び出し
 
     def _open_file_location_for_item(self, proxy_index):
-         #...(このメソッドの内容は変更なし)...
         if not proxy_index.isValid():
             logger.warning("ファイルの場所を開く操作が、無効なインデックスで呼び出されました。")
             return
@@ -1509,6 +1228,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"ディレクトリ '{dir_path}' を開く際に予期せぬエラーが発生しました: {e}", exc_info=True)
             QMessageBox.critical(self, "エラー", f"ディレクトリを開く際にエラーが発生しました:\n{e}")
+
 
 # (クラス定義の外、ファイルの末尾)
 # このファイルが直接実行された場合の起動ロジックなどがあれば、
