@@ -179,10 +179,11 @@ class FileOperationsWorker(QObject):
 
 
 class FileOperations(QObject):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, file_op_manager=None): # file_op_manager を追加
         super().__init__(parent)
         self._thread = None # Use a private attribute
         self._worker = None # Use a private attribute
+        self.file_op_manager = file_op_manager # file_op_manager を保持
 
     def start_operation(self, operation_type, source_paths, destination_folder, copy_selection_order=None):
         if self._thread is not None and self._thread.isRunning():
@@ -203,19 +204,28 @@ class FileOperations(QObject):
         self._worker = FileOperationsWorker(operation_type, source_paths, destination_folder, copy_selection_order)
         self._worker.moveToThread(self._thread)
 
-        # Connect signals from worker to slots in MainWindow (passed as parent)
-        # The parent of FileOperations is MainWindow
-        main_window = self.parent()
-        if main_window:
-            if hasattr(main_window, '_handle_file_op_progress'):
-                self._worker.signals.progress.connect(main_window._handle_file_op_progress)
-            if hasattr(main_window, '_handle_file_op_finished'):
-                self._worker.signals.finished.connect(main_window._handle_file_op_finished)
-            if hasattr(main_window, '_handle_file_op_error'):
-                self._worker.signals.error.connect(main_window._handle_file_op_error)
+        # Connect signals from worker to slots in FileOperationManager
+        if self.file_op_manager: # file_op_manager が渡されていれば接続
+            if hasattr(self.file_op_manager, '_handle_file_op_progress'):
+                self._worker.signals.progress.connect(self.file_op_manager._handle_file_op_progress)
+            if hasattr(self.file_op_manager, '_handle_file_op_finished'):
+                self._worker.signals.finished.connect(self.file_op_manager._handle_file_op_finished) # Connect to manager's finished
+            if hasattr(self.file_op_manager, '_handle_file_op_error'):
+                self._worker.signals.error.connect(self.file_op_manager._handle_file_op_error)
         else:
-            logger.error("FileOperations parent (MainWindow) not set correctly.")
-
+            # MainWindowへの直接接続のフォールバック（テストなどでfile_op_managerがNoneの場合）
+            # ただし、今回のリファクタリングでは常にfile_op_manager経由にするのが望ましい
+            main_window = self.parent()
+            if main_window:
+                logger.warning("FileOperations: file_op_manager not provided, attempting to connect to parent (MainWindow).")
+                if hasattr(main_window, '_handle_file_op_progress'): # Assuming MainWindow still has these for fallback
+                    self._worker.signals.progress.connect(main_window._handle_file_op_progress)
+                if hasattr(main_window, '_handle_file_op_finished'):
+                    self._worker.signals.finished.connect(main_window._handle_file_op_finished)
+                if hasattr(main_window, '_handle_file_op_error'):
+                    self._worker.signals.error.connect(main_window._handle_file_op_error)
+            else:
+                logger.error("FileOperations: Neither file_op_manager nor parent (MainWindow) is available for signal connection.")
 
         self._thread.started.connect(self._worker.run)
         
