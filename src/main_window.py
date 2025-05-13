@@ -587,20 +587,23 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._open_settings_dialog)
         menu_bar.addAction(settings_action) # メニューバーに直接「設定」を配置
 
-        # --- 「D&Dウィンドウ」アクションをメニューバーに直接追加 ---
-        toggle_drop_window_action = QAction("&D＆Dウィンドウ", self) # '&'でショートカットキーヒント
-        toggle_drop_window_action.setStatusTip("画像のメタデータを表示するためのドラッグ＆ドロップウィンドウを開きます")
-        # toggle_drop_window_action.setShortcut("Ctrl+D") # 必要であればショートカットを有効化
-        toggle_drop_window_action.triggered.connect(self._toggle_drop_window)
-        menu_bar.addAction(toggle_drop_window_action) # メニューバーに直接「D&Dウィンドウ」を配置
-
+        # --- 「ツール」メニューの作成 ---
         tool_menu = menu_bar.addMenu("&ツール")
 
+        # --- 「ツール」メニュー内のアクション定義と追加 ---
+
+        # 「ワイルドカード作成」アクション
         wc_creator_action = QAction("ワイルドカード作成 (&W)", self) # '&W' でアクセスキー W
         wc_creator_action.setStatusTip("選択された画像のプロンプトを整形・出力します。")
         wc_creator_action.triggered.connect(self._open_wc_creator_dialog)
         tool_menu.addAction(wc_creator_action)
 
+        # 「D&Dウィンドウ」アクション
+        toggle_drop_window_action = QAction("&D＆Dウィンドウ", self) # '&'でショートカットキーヒント
+        toggle_drop_window_action.setStatusTip("画像のメタデータを表示するためのドラッグ＆ドロップウィンドウを開きます")
+        # toggle_drop_window_action.setShortcut("Ctrl+D") # 必要であればショートカットを有効化
+        toggle_drop_window_action.triggered.connect(self._toggle_drop_window)
+        tool_menu.addAction(toggle_drop_window_action) # 「D&Dウィンドウ」をツールメニューの一番下に追加
     def _open_settings_dialog(self):
         dialog = SettingsDialog(
             current_thumbnail_size=self.current_thumbnail_size,
@@ -1194,11 +1197,11 @@ class MainWindow(QMainWindow):
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
 
     def _open_wc_creator_dialog(self):
-        logger.info("プロンプト整形ツールを起動します。")
+        logger.info("ワイルドカード作成ツールを起動します。")
 
         selected_proxy_indexes = self.thumbnail_view.selectionModel().selectedIndexes()
         if not selected_proxy_indexes:
-            QMessageBox.information(self, "情報", "整形対象の画像をサムネイル一覧から選択してください。")
+            QMessageBox.information(self, "情報", "作成対象の画像をサムネイル一覧から選択してください。")
             return
 
         selected_files_for_wc = []
