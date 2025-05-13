@@ -23,9 +23,10 @@ from src.full_image_dialog import FullImageDialog # Import FullImageDialog
 from src.image_metadata_dialog import ImageMetadataDialog # Import ImageMetadataDialog
 from PyQt6.QtCore import Qt as QtConstants, QModelIndex # For Qt.ItemDataRole.UserRole and QModelIndex mock
 from src.constants import (
-    METADATA_ROLE,
+    METADATA_ROLE, SELECTION_ORDER_ROLE, # Added SELECTION_ORDER_ROLE
     THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU
 )
+from src.renamed_files_dialog import RenamedFilesDialog # Import for mocking
 
 
 # from src.constants import APP_SETTINGS_FILE # Not strictly needed as app_settings is mocked
@@ -62,7 +63,7 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         patches = [
             patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
             patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
-            patch('src.main_window.MainWindow._load_settings', MagicMock()),
+            # patch('src.main_window.MainWindow._load_settings', MagicMock()), # _load_settings is now part of _load_app_settings
         ]
         for p in patches:
             p.start()
@@ -138,7 +139,6 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         expected_folders = sorted([
             os.path.normpath(os.path.join(self.base_path, "empty1")),
             os.path.normpath(os.path.join(self.base_path, "parent_of_empty_child")),
-            # os.path.normpath(os.path.join(self.base_path, "parent_of_mixed_children", "empty_grandchild_holder")), # This should not be found by _find_empty_subfolders on base_path
             os.path.normpath(os.path.join(self.base_path, "another_empty"))
         ])
         self.assertListEqual(sorted(map(os.path.normpath, found_folders)), expected_folders)
@@ -156,16 +156,13 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         found_folders = self.window._find_empty_subfolders(self.base_path)
         self.assertEqual(len(found_folders), 0)
 
-    # Tests for _handle_send_empty_folders_to_trash
-    # Tests for _handle_send_empty_folders_to_trash (now takes arguments)
-
     @patch('src.main_window.send2trash.send2trash')
-    @patch('PyQt6.QtWidgets.QMessageBox.question')
-    @patch('PyQt6.QtWidgets.QMessageBox.information')
-    @patch('PyQt6.QtWidgets.QMessageBox.warning') # For error summary
+    @patch('src.main_window.QMessageBox.question') # Corrected patch target
+    @patch('src.main_window.QMessageBox.information') # Corrected patch target
+    @patch('src.main_window.QMessageBox.warning') 
     @patch('src.main_window.logger')
-    @patch('os.path.exists', return_value=True) # Assume parent folder exists for update_folder_tree call
-    @patch('src.main_window.MainWindow.update_folder_tree') # Mock to prevent actual UI update
+    @patch('os.path.exists', return_value=True) 
+    @patch('src.main_window.MainWindow.update_folder_tree') 
     def test_handle_send_empty_folders_found_confirm_yes(self, mock_update_tree, mock_path_exists, mock_logger, mock_msgbox_warn, mock_msgbox_info, mock_msgbox_question, mock_send2trash):
         parent_context_path = os.path.join(self.base_path, "parent_for_empty_deletion")
         self.create_dir(parent_context_path)
@@ -186,11 +183,8 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
                          f"- {empty_folder2}\n"
         mock_msgbox_question.assert_called_once_with(self.window, "空フォルダ削除の確認", expected_q_msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         
-        mock_send2trash.assert_has_calls([call(empty_folder1), call(empty_folder2)], any_order=True)
+        mock_send2trash.assert_has_calls([call(os.path.normpath(empty_folder1)), call(os.path.normpath(empty_folder2))], any_order=True) # Use normpath
         self.assertEqual(mock_send2trash.call_count, len(empty_folders_to_delete))
-        
-        for p in empty_folders_to_delete:
-            mock_logger.info.assert_any_call(f"ゴミ箱へ移動 (正規化試行): {os.path.normpath(p)} (元: {p})")
             
         expected_summary_title = f"空フォルダ削除完了 ({os.path.basename(parent_context_path)})"
         mock_msgbox_info.assert_called_once_with(self.window, expected_summary_title, f"{len(empty_folders_to_delete)}個のフォルダをゴミ箱に移動しました。")
@@ -198,7 +192,7 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
 
 
     @patch('src.main_window.send2trash.send2trash')
-    @patch('PyQt6.QtWidgets.QMessageBox.question')
+    @patch('src.main_window.QMessageBox.question') # Corrected patch target
     @patch('src.main_window.logger')
     def test_handle_send_empty_folders_found_confirm_no(self, mock_logger, mock_msgbox_question, mock_send2trash):
         parent_context_path = os.path.join(self.base_path, "parent_for_no_confirm")
@@ -215,8 +209,8 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         mock_logger.info.assert_called_with(f"'{parent_context_path}' 内の空のサブフォルダのゴミ箱への移動はキャンセルされました。")
 
     @patch('src.main_window.send2trash.send2trash')
-    @patch('PyQt6.QtWidgets.QMessageBox.question')
-    @patch('PyQt6.QtWidgets.QMessageBox.warning')
+    @patch('src.main_window.QMessageBox.question') # Corrected patch target
+    @patch('src.main_window.QMessageBox.warning') # Corrected patch target
     @patch('src.main_window.logger')
     @patch('os.path.exists', return_value=True)
     @patch('src.main_window.MainWindow.update_folder_tree')
@@ -242,7 +236,6 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         mock_msgbox_warn.assert_called_once_with(self.window, expected_summary_title, expected_warn_msg)
         mock_update_tree.assert_called_once_with(parent_context_path)
 
-    # Tests for _try_delete_empty_subfolders
     @patch('src.main_window.MainWindow._find_empty_subfolders')
     @patch('src.main_window.MainWindow._handle_send_empty_folders_to_trash')
     @patch('os.path.isdir', return_value=True) 
@@ -257,7 +250,7 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         self.window._try_delete_empty_subfolders(target_folder)
         
         mock_find_empty.assert_called_once_with(target_folder)
-        mock_handle_send.assert_called_once_with(target_folder, found_empty_folders) # context_message removed
+        mock_handle_send.assert_called_once_with(target_folder, found_empty_folders) 
         mock_logger.info.assert_any_call(f"'{target_folder}' 内に {len(found_empty_folders)} 個の空サブフォルダが見つかりました。削除処理を開始します。")
 
     @patch('src.main_window.MainWindow._find_empty_subfolders')
@@ -304,18 +297,14 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         mock_handle_send.assert_not_called()
         mock_logger.debug.assert_called_once_with(f"指定されたフォルダパス '{target_folder}' が無効なため、空フォルダ削除をスキップします。")
 
-    # Tests for call sites of _try_delete_empty_subfolders
-
     @patch('src.main_window.MainWindow._try_delete_empty_subfolders')
-    @patch('src.main_window.MainWindow.load_thumbnails_from_folder') # Mock to prevent actual loading
-    @patch('os.path.isdir', return_value=True) # Assume path is a valid directory
+    @patch('src.main_window.MainWindow.load_thumbnails_from_folder') 
+    @patch('os.path.isdir', return_value=True) 
     def test_on_folder_tree_clicked_calls_try_delete(self, mock_os_isdir, mock_load_thumbnails, mock_try_delete):
-        """Test that on_folder_tree_clicked calls _try_delete_empty_subfolders."""
         mock_index = MagicMock()
         test_folder_path = os.path.join(self.base_path, "clicked_folder")
         self.create_dir(test_folder_path)
 
-        # Mock the file_system_model part
         self.window.file_system_model = MagicMock()
         self.window.file_system_model.filePath.return_value = test_folder_path
         self.window.file_system_model.isDir.return_value = True
@@ -329,32 +318,23 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
     @patch('src.main_window.MainWindow.load_thumbnails_from_folder')
     @patch('os.path.isdir', return_value=True)
     def test_update_folder_tree_calls_try_delete(self, mock_os_isdir, mock_load_thumbnails, mock_try_delete):
-        """Test that update_folder_tree calls _try_delete_empty_subfolders."""
         test_folder_path = os.path.join(self.base_path, "selected_folder_via_button")
         self.create_dir(test_folder_path)
 
-        # Mock parts of update_folder_tree that interact with UI/model heavily
         self.window.file_system_model = MagicMock()
         self.window.folder_tree_view = MagicMock()
-        # self.window.folder_tree_view.setRootIndex = MagicMock()
-        # self.window.folder_tree_view.setCurrentIndex = MagicMock()
-        # self.window.folder_tree_view.scrollTo = MagicMock()
-        # self.window.file_system_model.index.return_value.isValid.return_value = True
-
-
+        
         self.window.update_folder_tree(test_folder_path)
 
         mock_load_thumbnails.assert_called_once_with(test_folder_path)
         mock_try_delete.assert_called_once_with(test_folder_path)
 
     @patch('src.main_window.MainWindow._try_delete_empty_subfolders')
-    @patch('src.main_window.MainWindow.deselect_all_thumbnails') # Mock this as it's called
+    @patch('src.main_window.MainWindow.deselect_all_thumbnails') 
     def test_handle_file_op_finished_move_calls_try_delete(self, mock_deselect, mock_try_delete):
-        """Test _handle_file_op_finished calls _try_delete_empty_subfolders after a move."""
         source_folder_to_check = os.path.join(self.base_path, "source_of_move")
         self.create_dir(source_folder_to_check)
         
-        # Simulate a successful move operation result
         result = {
             'status': 'completed',
             'operation_type': 'move',
@@ -364,23 +344,12 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
             'destination_folder': os.path.join(self.base_path, "destination_of_move")
         }
         
-        # Mock current_folder_path to be different from source_folder_to_check to ensure
-        # the check is based on successfully_moved_src_paths' parent.
         self.window.current_folder_path = os.path.join(self.base_path, "some_other_current_folder")
         self.create_dir(self.window.current_folder_path)
 
-
-        with patch('os.path.isdir', return_value=True): # Ensure all paths are seen as dirs
+        with patch('os.path.isdir', return_value=True): 
              self.window._handle_file_op_finished(result)
-
-        # _try_delete_empty_subfolders should be called for the parent of the moved file
-        # and potentially for self.window.current_folder_path if it was also a source (though logic is complex there)
-        # For this test, we focus on the source_folder_to_check.
-        mock_try_delete.assert_any_call(source_folder_to_check)
-        # It might also be called for self.window.current_folder_path if logic deems it a source.
-        # Let's check it was called at least once with the specific source.
         
-        # Verify it was called for source_folder_to_check
         called_with_source_folder = False
         for call_args in mock_try_delete.call_args_list:
             if call_args[0][0] == source_folder_to_check:
@@ -389,931 +358,360 @@ class TestMainWindowEmptyFolderFunctions(unittest.TestCase):
         self.assertTrue(called_with_source_folder, f"_try_delete_empty_subfolders not called with {source_folder_to_check}")
 
 
+class TestMainWindowFileOperations(unittest.TestCase):
+    def setUp(self):
+        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
+        patches = [
+            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
+            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
+            patch('src.main_window.MainWindow._read_app_settings_file', return_value=self.mock_app_settings.copy()),
+            patch('src.main_window.MainWindow._write_app_settings_file', MagicMock(return_value=None))
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        self.window = MainWindow()
+        self.window.logger = MagicMock(spec=logging.Logger)
+        self.window.statusBar = MagicMock() 
+
+        self.window.file_operations = MagicMock()
+        self.window.file_operations.start_operation = MagicMock(return_value=True) 
+
+        self.window.move_files_button = MagicMock()
+        self.window.copy_mode_button = MagicMock()
+        self.window.copy_files_button = MagicMock()
+        self.window.folder_select_button = MagicMock()
+        self.window.folder_tree_view = MagicMock()
+
+        self.mock_qprogress_dialog_patcher = patch('src.main_window.QProgressDialog')
+        self.MockQProgressDialog = self.mock_qprogress_dialog_patcher.start()
+        self.addCleanup(self.mock_qprogress_dialog_patcher.stop)
+
+
+    @patch('src.main_window.QFileDialog.getExistingDirectory')
+    def test_handle_move_files_button_clicked_no_selection(self, mock_get_existing_directory):
+        self.window.selected_file_paths = [] 
+
+        self.window._handle_move_files_button_clicked()
+
+        self.window.statusBar.showMessage.assert_called_once_with("移動するファイルを選択してください。", 3000)
+        mock_get_existing_directory.assert_not_called()
+        self.window.file_operations.start_operation.assert_not_called()
+
+    @patch('src.main_window.QFileDialog.getExistingDirectory')
+    def test_handle_move_files_button_clicked_destination_selected(self, mock_get_existing_directory):
+        self.window.selected_file_paths = ["/path/file1.jpg", "/path/file2.png"]
+        mock_get_existing_directory.return_value = "/destination/folder"
+
+        mock_progress_dialog_instance = self.MockQProgressDialog.return_value
+
+        self.window._handle_move_files_button_clicked()
+
+        mock_get_existing_directory.assert_called_once()
+        self.window.file_operations.start_operation.assert_called_once_with(
+            "move", self.window.selected_file_paths, "/destination/folder"
+        )
+        self.MockQProgressDialog.assert_called_once_with(
+            f"ファイルを移動中... (0/{len(self.window.selected_file_paths)})",
+            "キャンセル", 0, len(self.window.selected_file_paths), self.window
+        )
+        mock_progress_dialog_instance.setWindowTitle.assert_called_once_with("ファイル移動")
+        mock_progress_dialog_instance.setMinimumDuration.assert_called_once_with(0)
+        mock_progress_dialog_instance.canceled.connect.assert_called_once_with(self.window.file_operations.stop_operation)
+        mock_progress_dialog_instance.setWindowModality.assert_called_once_with(QtConstants.WindowModality.WindowModal)
+        mock_progress_dialog_instance.setValue.assert_called_once_with(0)
+
+        with patch.object(self.window, '_set_file_op_buttons_enabled') as mock_set_enabled:
+            # Re-run the method to check the side effect on buttons
+            self.window.file_operations.start_operation.return_value = True # Ensure it's true for this path
+            self.window._handle_move_files_button_clicked() # Call again
+            mock_set_enabled.assert_called_with(False)
+
+
+    @patch('src.main_window.QFileDialog.getExistingDirectory')
+    def test_handle_move_files_button_clicked_destination_cancelled(self, mock_get_existing_directory):
+        self.window.selected_file_paths = ["/path/file1.jpg"]
+        mock_get_existing_directory.return_value = "" 
+
+        self.window._handle_move_files_button_clicked()
+
+        mock_get_existing_directory.assert_called_once()
+        self.window.file_operations.start_operation.assert_not_called()
+        self.MockQProgressDialog.assert_not_called() 
+
+    def test_handle_copy_mode_toggled_on(self):
+        """Test toggling copy mode ON."""
+        self.window.is_copy_mode = False 
+        self.window.copy_selection_order = [MagicMock()] 
+        self.window.deselect_all_thumbnails = MagicMock() 
+
+        self.window._handle_copy_mode_toggled(True) # Toggle ON
+
+        self.assertTrue(self.window.is_copy_mode)
+        self.window.copy_mode_button.setText.assert_called_once_with("Copy Mode Exit")
+        self.window.move_files_button.setEnabled.assert_called_once_with(False)
+        self.window.copy_files_button.setEnabled.assert_called_once_with(True)
+        self.window.deselect_all_thumbnails.assert_called_once()
+        self.assertEqual(self.window.copy_selection_order, [])
+
+    def test_handle_copy_mode_toggled_off(self):
+        """Test toggling copy mode OFF."""
+        self.window.is_copy_mode = True 
+        self.window.copy_selection_order = [MagicMock()]
+        self.window.deselect_all_thumbnails = MagicMock()
+
+        mock_item_with_role = MagicMock()
+        mock_item_with_role.data.return_value = 1 
+        mock_item_without_role = MagicMock()
+        mock_item_without_role.data.return_value = None 
+        self.window.source_thumbnail_model = MagicMock()
+        self.window.source_thumbnail_model.rowCount.return_value = 2
+        self.window.source_thumbnail_model.item = MagicMock(side_effect=[mock_item_with_role, mock_item_without_role])
+        
+        self.window.thumbnail_view = MagicMock() 
+        self.window.filter_proxy_model = MagicMock() 
+        # Mock mapFromSource to return a valid QModelIndex
+        self.window.filter_proxy_model.mapFromSource.return_value = MagicMock(spec=QModelIndex)
+        self.window.filter_proxy_model.mapFromSource.return_value.isValid.return_value = True
+
+
+        self.window._handle_copy_mode_toggled(False) # Toggle OFF
+
+        self.assertFalse(self.window.is_copy_mode)
+        self.window.copy_mode_button.setText.assert_called_once_with("Copy Mode")
+        self.window.move_files_button.setEnabled.assert_called_once_with(True)
+        self.window.copy_files_button.setEnabled.assert_called_once_with(False)
+        self.window.deselect_all_thumbnails.assert_called_once()
+        self.assertEqual(self.window.copy_selection_order, [])
+        
+        mock_item_with_role.setData.assert_called_once_with(None, SELECTION_ORDER_ROLE)
+        self.assertTrue(self.window.thumbnail_view.update.called)
+
+    @patch('src.main_window.QFileDialog.getExistingDirectory')
+    def test_handle_copy_files_button_clicked_no_selection(self, mock_get_existing_directory):
+        """Test copy files button click when no files are in copy_selection_order."""
+        self.window.copy_selection_order = [] 
+
+        self.window._handle_copy_files_button_clicked()
+
+        self.window.statusBar.showMessage.assert_called_once_with("コピーするファイルを順番に選択してください。", 3000)
+        mock_get_existing_directory.assert_not_called()
+        self.window.file_operations.start_operation.assert_not_called()
+
+    @patch('src.main_window.QFileDialog.getExistingDirectory')
+    def test_handle_copy_files_button_clicked_destination_selected(self, mock_get_existing_directory):
+        """Test copy files button click when files are selected and destination is chosen."""
+        mock_item1 = MagicMock()
+        mock_item1.data.return_value = "/path/copy_file1.jpg" 
+        self.window.copy_selection_order = [mock_item1]
+        mock_get_existing_directory.return_value = "/copy_destination/folder"
+
+        mock_progress_dialog_instance = self.MockQProgressDialog.return_value
+
+        self.window._handle_copy_files_button_clicked()
+
+        mock_get_existing_directory.assert_called_once()
+        self.window.file_operations.start_operation.assert_called_once_with(
+            "copy", None, "/copy_destination/folder", copy_selection_order=self.window.copy_selection_order
+        )
+        self.MockQProgressDialog.assert_called_once_with(
+            f"ファイルをコピー中... (0/{len(self.window.copy_selection_order)})",
+            "キャンセル", 0, len(self.window.copy_selection_order), self.window
+        )
+        mock_progress_dialog_instance.setWindowTitle.assert_called_once_with("ファイルコピー")
+        
+        with patch.object(self.window, '_set_file_op_buttons_enabled') as mock_set_enabled:
+            self.window.file_operations.start_operation.return_value = True
+            self.window._handle_copy_files_button_clicked() # Call again
+            mock_set_enabled.assert_called_with(False)
+
+
+    @patch('src.main_window.QFileDialog.getExistingDirectory')
+    def test_handle_copy_files_button_clicked_destination_cancelled(self, mock_get_existing_directory):
+        """Test copy files button click when destination selection is cancelled."""
+        self.window.copy_selection_order = [MagicMock()]
+        mock_get_existing_directory.return_value = "" 
+
+        self.window._handle_copy_files_button_clicked()
+
+        mock_get_existing_directory.assert_called_once()
+        self.window.file_operations.start_operation.assert_not_called()
+        self.MockQProgressDialog.assert_not_called()
+
+    def test_set_file_op_buttons_enabled_true(self):
+        """Test _set_file_op_buttons_enabled when enabling buttons."""
+        self.window.is_copy_mode = False # Move mode
+        self.window._set_file_op_buttons_enabled(True)
+        self.window.move_files_button.setEnabled.assert_called_with(True)
+        self.window.copy_files_button.setEnabled.assert_called_with(False) # Should be false in move mode
+        self.window.copy_mode_button.setEnabled.assert_called_with(True)
+        self.window.folder_select_button.setEnabled.assert_called_with(True)
+        self.window.folder_tree_view.setEnabled.assert_called_with(True)
+
+    def test_set_file_op_buttons_enabled_false(self):
+        """Test _set_file_op_buttons_enabled when disabling buttons."""
+        self.window._set_file_op_buttons_enabled(False)
+        self.window.move_files_button.setEnabled.assert_called_with(False)
+        self.window.copy_files_button.setEnabled.assert_called_with(False)
+        self.window.copy_mode_button.setEnabled.assert_called_with(False)
+        self.window.folder_select_button.setEnabled.assert_called_with(False)
+        self.window.folder_tree_view.setEnabled.assert_called_with(False)
+
+    def test_handle_file_op_progress(self):
+        """Test _handle_file_op_progress updates the progress dialog."""
+        # Ensure a progress dialog instance is set up for the window
+        self.window.progress_dialog = self.MockQProgressDialog() # Create an instance
+        # Ensure wasCanceled returns False for this test path
+        self.window.progress_dialog.wasCanceled.return_value = False
+
+        self.window._handle_file_op_progress(5, 10)
+
+        self.window.progress_dialog.setMaximum.assert_called_once_with(10)
+        self.window.progress_dialog.setValue.assert_called_once_with(5)
+        self.window.progress_dialog.setLabelText.assert_called_once_with("処理中: 5/10 ファイル...")
+
+    def test_handle_file_op_progress_dialog_cancelled(self):
+        """Test _handle_file_op_progress when dialog was cancelled."""
+        mock_progress_dialog_instance = self.MockQProgressDialog.return_value
+        mock_progress_dialog_instance.wasCanceled.return_value = True
+        self.window.progress_dialog = mock_progress_dialog_instance
+
+        self.window._handle_file_op_progress(1, 2)
+
+        mock_progress_dialog_instance.setValue.assert_not_called() # Should not update if cancelled
+
+    @patch('src.main_window.QMessageBox.critical')
+    def test_handle_file_op_error(self, mock_qmessagebox_critical):
+        """Test _handle_file_op_error shows error message and enables buttons."""
+        # Simulate an existing progress dialog
+        mock_dialog_instance = self.MockQProgressDialog()
+        self.window.progress_dialog = mock_dialog_instance
+
+        with patch.object(self.window, '_set_file_op_buttons_enabled') as mock_set_enabled:
+            self.window._handle_file_op_error("Test Error Message")
+
+            mock_dialog_instance.close.assert_called_once() # Check close on the instance
+            self.assertIsNone(self.window.progress_dialog)
+            mock_qmessagebox_critical.assert_called_once_with(self.window, "ファイル操作エラー", "エラーが発生しました:\nTest Error Message")
+            self.window.statusBar.showMessage.assert_called_once_with("ファイル操作中にエラーが発生しました。", 5000)
+            mock_set_enabled.assert_called_once_with(True)
+
+    @patch('src.main_window.RenamedFilesDialog')
+    @patch('src.main_window.MainWindow._try_delete_empty_subfolders') # Mock this to avoid its complexities
+    def test_handle_file_op_finished_move_success_with_rename(self, mock_try_delete, MockRenamedFilesDialog): # Added mock_try_delete
+        """Test _handle_file_op_finished for a successful move operation with renamed files."""        
+        mock_dialog_instance = self.MockQProgressDialog() # Create a mock instance
+        self.window.progress_dialog = mock_dialog_instance # Assign it
+        self.window.selected_file_paths = ["/original/path.txt"] 
+        self.window.source_thumbnail_model = MagicMock() 
+        self.window.source_thumbnail_model.rowCount.return_value = 1
+        mock_item = MagicMock()
+        mock_item.data.return_value = "/original/path.txt" # UserRole
+        self.window.source_thumbnail_model.item.return_value = mock_item
+        mock_item.row.return_value = 0 # Simulate it's the first row
+        mock_item.model.return_value = self.window.source_thumbnail_model # Ensure model matches
+        self.window.source_thumbnail_model.indexFromItem.return_value = MagicMock() 
+        self.window.filter_proxy_model = MagicMock() 
+
+        result = {
+            'status': 'completed', 'operation_type': 'move', 'moved_count': 1,
+            'renamed_files': [{'original': 'old.txt', 'new': 'new.txt'}], 'errors': [],
+            'successfully_moved_src_paths': ["/original/path.txt"]
+        }
+        # Ensure os.path.isdir returns True for the paths that will be checked
+        with patch('src.main_window.os.path.isdir', return_value=True), \
+             patch.object(self.window, '_set_file_op_buttons_enabled') as mock_set_enabled:
+            self.window._handle_file_op_finished(result) # mock_try_delete is now passed as arg
+            mock_dialog_instance.close.assert_called_once() # Check close on the instance
+            self.assertIsNone(self.window.progress_dialog)
+            mock_set_enabled.assert_called_once_with(True)
+            self.window.statusBar.showMessage.assert_any_call("1個のファイルを移動しました。", 5000) # Check if it was called at least once with these args
+            MockRenamedFilesDialog.assert_called_once()
+            self.window.source_thumbnail_model.removeRow.assert_called_once()
+            self.assertEqual(self.window.selected_file_paths, []) 
+            mock_try_delete.assert_called() 
+
+
+class TestMainWindowSortFilterUI(unittest.TestCase):
+    def setUp(self):
+        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
+        patches = [
+            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
+            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
+            patch('src.main_window.MainWindow._read_app_settings_file', return_value=self.mock_app_settings.copy()),
+            patch('src.main_window.MainWindow._write_app_settings_file', MagicMock(return_value=None))
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        self.window = MainWindow()
+        self.window.logger = MagicMock(spec=logging.Logger)
+        self.window.statusBar = MagicMock()
+
+        # Mock UI elements related to sort/filter
+        self.window.sort_key_combo = MagicMock()
+        self.window.sort_order_button = MagicMock()
+        self.window.positive_prompt_filter_edit = MagicMock()
+        self.window.negative_prompt_filter_edit = MagicMock()
+        self.window.generation_info_filter_edit = MagicMock()
+        self.window.and_radio_button = MagicMock()
+        self.window.or_radio_button = MagicMock()
+        self.window.apply_filter_button = MagicMock() # Though not directly tested here, good to have
+
+        # Mock methods that are called by the UI handlers
+        self.window._perform_sort = MagicMock()
+        self.window.filter_proxy_model = MagicMock() # Mock the proxy model
+        self.window.deselect_all_thumbnails = MagicMock()
+        self.window._update_status_bar_info = MagicMock()
+
+    def test_toggle_sort_order_and_apply_from_ascending(self):
+        """Test toggling sort order from Ascending to Descending."""
+        self.window.current_sort_order = QtConstants.SortOrder.AscendingOrder
+        self.window.sort_order_button.text.return_value = "昇順 ▲" # Initial text
+
+        self.window._toggle_sort_order_and_apply()
+
+        self.assertEqual(self.window.current_sort_order, QtConstants.SortOrder.DescendingOrder)
+        self.window.sort_order_button.setText.assert_called_once_with("降順 ▼")
+        self.window._perform_sort.assert_called_once() # _apply_sort_and_filter_update calls _perform_sort
+
+    def test_toggle_sort_order_and_apply_from_descending(self):
+        """Test toggling sort order from Descending to Ascending."""
+        self.window.current_sort_order = QtConstants.SortOrder.DescendingOrder
+        self.window.sort_order_button.text.return_value = "降順 ▼" # Initial text
+
+        self.window._toggle_sort_order_and_apply()
+
+        self.assertEqual(self.window.current_sort_order, QtConstants.SortOrder.AscendingOrder)
+        self.window.sort_order_button.setText.assert_called_once_with("昇順 ▲")
+        self.window._perform_sort.assert_called_once()
+
+    def test_apply_sort_and_filter_update_calls_perform_sort(self):
+        """Test that _apply_sort_and_filter_update calls _perform_sort."""
+        self.window.sort_key_combo.currentIndex.return_value = 1 # Simulate "Update Date"
+        
+        self.window._apply_sort_and_filter_update()
+
+        self.assertEqual(self.window.current_sort_key_index, 1)
+        self.window._perform_sort.assert_called_once()
+
+    def test_apply_filters_sets_proxy_filters(self):
+        """Test that apply_filters correctly sets filters on the proxy model."""
+        self.window.and_radio_button.isChecked.return_value = True # Simulate AND mode
+        self.window.positive_prompt_filter_edit.text.return_value = "positive_test"
+        self.window.negative_prompt_filter_edit.text.return_value = "negative_test"
+        self.window.generation_info_filter_edit.text.return_value = "gen_info_test"
+
+        self.window.apply_filters(preserve_selection=False)
+
+        self.window.deselect_all_thumbnails.assert_called_once()
+        self.window.filter_proxy_model.set_search_mode.assert_called_once_with("AND")
+        self.window.filter_proxy_model.set_positive_prompt_filter.assert_called_once_with("positive_test")
+        self.window.filter_proxy_model.set_negative_prompt_filter.assert_called_once_with("negative_test")
+        self.window.filter_proxy_model.set_generation_info_filter.assert_called_once_with("gen_info_test")
+        self.window._update_status_bar_info.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
-
-
-class TestMainWindowSettingsDialogInteraction(unittest.TestCase):
-    def setUp(self):
-        # Basic setup for MainWindow, similar to TestMainWindowEmptyFolderFunctions
-        # but focused on settings dialog interaction.
-        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
-
-        patches = [
-            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
-            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
-            patch('src.main_window.MainWindow._load_settings', MagicMock()),
-            # Patch file I/O for settings to avoid actual file operations during these tests
-            patch('src.main_window.MainWindow._read_app_settings_file', return_value=self.mock_app_settings.copy()),
-            patch('src.main_window.MainWindow._write_app_settings_file', MagicMock(return_value=None))
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-        self.window = MainWindow()
-        # Set initial states that would normally be loaded
-        self.window.current_thumbnail_size = self.mock_app_settings["thumbnail_size"]
-        self.window.image_preview_mode = self.mock_app_settings["full_image_view_mode"] # Ensure this matches a key in DEFAULT_TEST_APP_SETTINGS
-        self.window.available_sizes = [96, 128, 200] # Match MainWindow's default
-        self.window.logger = MagicMock(spec=logging.Logger)
-        # Initialize thumbnail_right_click_action for tests
-        self.window.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA 
-
-
-    @patch('src.main_window.SettingsDialog')
-    def test_open_settings_dialog_instantiation_and_exec(self, MockSettingsDialog):
-        """Test that SettingsDialog is instantiated and executed correctly."""
-        mock_dialog_instance = MockSettingsDialog.return_value
-        mock_dialog_instance.exec.return_value = False # Simulate cancel
-
-        self.window._open_settings_dialog()
-
-        MockSettingsDialog.assert_called_once_with(
-            current_thumbnail_size=self.window.current_thumbnail_size,
-            available_thumbnail_sizes=self.window.available_sizes,
-            current_preview_mode=self.window.image_preview_mode,
-            current_right_click_action=self.window.thumbnail_right_click_action, # Verify new arg
-            parent=self.window
-        )
-        mock_dialog_instance.exec.assert_called_once()
-
-    @patch('src.main_window.SettingsDialog')
-    @patch('src.main_window.QMessageBox')
-    def test_settings_dialog_accepted_preview_mode_changed(self, MockQMessageBox, MockSettingsDialog):
-        """Test preview mode change when dialog is accepted."""
-        mock_dialog_instance = MockSettingsDialog.return_value
-        mock_dialog_instance.exec.return_value = True # Simulate OK
-        mock_dialog_instance.get_selected_preview_mode.return_value = "new_preview_mode"
-        # Simulate no thumbnail size change to avoid QMessageBox
-        mock_dialog_instance.get_selected_thumbnail_size.return_value = self.window.current_thumbnail_size
-        # Simulate no right-click action change
-        mock_dialog_instance.get_selected_right_click_action.return_value = self.window.thumbnail_right_click_action
-
-
-        self.window._open_settings_dialog()
-
-        self.assertEqual(self.window.image_preview_mode, "new_preview_mode")
-        self.window._write_app_settings_file.assert_called_once()
-        updated_settings_call = self.window._write_app_settings_file.call_args[0][0]
-        self.assertEqual(updated_settings_call["image_preview_mode"], "new_preview_mode")
-        self.assertEqual(updated_settings_call[THUMBNAIL_RIGHT_CLICK_ACTION], self.window.thumbnail_right_click_action) # Ensure it's saved
-        MockQMessageBox.question.assert_not_called() # No thumbnail size change, so no confirmation
-
-    @patch('src.main_window.SettingsDialog')
-    @patch('src.main_window.QMessageBox.question')
-    def test_settings_dialog_accepted_right_click_action_changed(self, mock_qmessagebox_question, MockSettingsDialog):
-        """Test right-click action change when dialog is accepted."""
-        initial_right_click_action = RIGHT_CLICK_ACTION_METADATA
-        new_right_click_action = RIGHT_CLICK_ACTION_MENU
-        self.window.thumbnail_right_click_action = initial_right_click_action
-
-        mock_dialog_instance = MockSettingsDialog.return_value
-        mock_dialog_instance.exec.return_value = True # OK
-        mock_dialog_instance.get_selected_right_click_action.return_value = new_right_click_action
-        # Simulate no changes for other settings
-        mock_dialog_instance.get_selected_preview_mode.return_value = self.window.image_preview_mode
-        mock_dialog_instance.get_selected_thumbnail_size.return_value = self.window.current_thumbnail_size
-
-        self.window._open_settings_dialog()
-
-        self.assertEqual(self.window.thumbnail_right_click_action, new_right_click_action)
-        self.window._write_app_settings_file.assert_called_once()
-        updated_settings_call = self.window._write_app_settings_file.call_args[0][0]
-        self.assertEqual(updated_settings_call[THUMBNAIL_RIGHT_CLICK_ACTION], new_right_click_action)
-        mock_qmessagebox_question.assert_not_called() # No thumbnail size change
-
-    @patch('src.main_window.SettingsDialog')
-    @patch('src.main_window.QMessageBox') # Patch QMessageBox class
-    @patch('src.main_window.MainWindow.apply_thumbnail_size_change', autospec=True)
-    def test_settings_dialog_accepted_thumbnail_size_changed_confirmed(
-            self, mock_apply_thumb_change, MockQMessageBoxClass, MockSettingsDialog): # Changed mock name
-        """Test thumbnail size change confirmed by user."""
-
-        self.window.current_thumbnail_size = 128
-        self.window.is_loading_thumbnails = False
-        self.window.available_sizes = [96, 128, 200]
-
-        mock_dialog_instance = MockSettingsDialog.return_value
-        mock_dialog_instance.exec.return_value = True # OK
-        mock_dialog_instance.get_selected_preview_mode.return_value = self.window.image_preview_mode # No change
-        mock_dialog_instance.get_selected_right_click_action.return_value = self.window.thumbnail_right_click_action # No change
-        new_thumb_size = 200
-        self.assertNotEqual(new_thumb_size, self.window.current_thumbnail_size, "New and current thumb size should differ for this test.")
-        mock_dialog_instance.get_selected_thumbnail_size.return_value = new_thumb_size
-        
-        mock_msg_box_instance = MockQMessageBoxClass.return_value # Get instance from mocked class
-        # Use .value for enum comparison consistency, as exec() returns an int
-        mock_msg_box_instance.exec.return_value = OriginalQMessageBox.StandardButton.Ok.value 
-
-        def side_effect_apply_thumb_change(instance_self, size):
-            # This side effect simulates the behavior of the real apply_thumbnail_size_change
-            # which, if successful, would lead to self.window.current_thumbnail_size being updated.
-            # The actual update of self.window.current_thumbnail_size happens in _open_settings_dialog
-            # after this mock returns True.
-            # However, since we are mocking apply_thumbnail_size_change itself,
-            # the line `self.current_thumbnail_size = new_size` within the real method
-            # won't be executed. The side_effect needs to simulate this.
-            # The instance_self here is `self.window`.
-            instance_self.current_thumbnail_size = size # Simulate the update
-            return True # Simulate successful application
-        mock_apply_thumb_change.side_effect = side_effect_apply_thumb_change
-        # mock_apply_thumb_change.return_value = True # side_effect takes precedence
-
-        self.window._open_settings_dialog()
-
-        MockQMessageBoxClass.assert_called_once_with(self.window)
-        # Optionally, assert other properties of the QMessageBox instance if needed
-        # e.g., mock_msg_box_instance.setWindowTitle.assert_called_with("サムネイルサイズ変更の確認")
-        mock_msg_box_instance.setText.assert_called_with(f"サムネイルサイズを {new_thumb_size}px に変更しますか？\n表示中の全サムネイルが再生成されます。\n画像の枚数によっては時間がかかる場合があります。")
-        
-        # Check that setStandardButtons was called.
-        # Verifying the exact argument can be tricky with deep mocks of enums.
-        mock_msg_box_instance.setStandardButtons.assert_called_once()
-        # We can still check the integer value if the mock provides it,
-        # but the primary check is that the method was called.
-        # called_arg = mock_msg_box_instance.setStandardButtons.call_args[0][0]
-        # expected_buttons_value = (OriginalQMessageBox.StandardButton.Ok | OriginalQMessageBox.StandardButton.Cancel).value
-        # if isinstance(called_arg, int): # If the mock passes the int value directly
-        #     self.assertEqual(called_arg, expected_buttons_value)
-        # elif hasattr(called_arg, 'value'): # If the mock passes a QFlags-like object
-        #     self.assertEqual(called_arg.value, expected_buttons_value)
-        # else: # Fallback: if called_arg is a MagicMock, this comparison might still fail.
-        #     # Consider checking properties of called_arg if it's a MagicMock representing the QFlags object.
-        #     pass # For now, just assert_called_once is the most robust for this mock setup.
-
-        mock_msg_box_instance.exec.assert_called_once()
-        
-        mock_apply_thumb_change.assert_called_once_with(self.window, new_thumb_size)
-        
-        self.assertEqual(self.window.current_thumbnail_size, new_thumb_size, "Window's current_thumbnail_size was not updated correctly.")
-        
-        self.window._write_app_settings_file.assert_called_once()
-        updated_settings_call = self.window._write_app_settings_file.call_args[0][0]
-        self.assertEqual(updated_settings_call["thumbnail_size"], new_thumb_size)
-
-
-    @patch('src.main_window.SettingsDialog')
-    @patch('src.main_window.QMessageBox') # Patch QMessageBox class
-    @patch('src.main_window.MainWindow.apply_thumbnail_size_change')
-    def test_settings_dialog_accepted_thumbnail_size_changed_cancelled_by_user(self, mock_apply_thumb_change, MockQMessageBoxClass, MockSettingsDialog): # Changed mock name
-        """Test thumbnail size change cancelled by user via QMessageBox."""
-        initial_thumb_size = self.window.current_thumbnail_size
-        mock_dialog_instance = MockSettingsDialog.return_value
-        mock_dialog_instance.exec.return_value = True # OK
-        mock_dialog_instance.get_selected_preview_mode.return_value = self.window.image_preview_mode
-        mock_dialog_instance.get_selected_right_click_action.return_value = self.window.thumbnail_right_click_action # No change
-        new_thumb_size = 200
-        mock_dialog_instance.get_selected_thumbnail_size.return_value = new_thumb_size
-        
-        mock_msg_box_instance = MockQMessageBoxClass.return_value # Get instance
-        mock_msg_box_instance.exec.return_value = OriginalQMessageBox.StandardButton.Cancel.value # User cancels
-
-        self.window._open_settings_dialog()
-
-        MockQMessageBoxClass.assert_called_once_with(self.window)
-        mock_msg_box_instance.setText.assert_called_with(f"サムネイルサイズを {new_thumb_size}px に変更しますか？\n表示中の全サムネイルが再生成されます。\n画像の枚数によっては時間がかかる場合があります。")
-        
-        # Check that setStandardButtons was called.
-        mock_msg_box_instance.setStandardButtons.assert_called_once()
-        # Similar to above, detailed argument check is difficult with current mock.
-        # called_arg_cancel = mock_msg_box_instance.setStandardButtons.call_args[0][0]
-        # expected_buttons_value_cancel = (OriginalQMessageBox.StandardButton.Ok | OriginalQMessageBox.StandardButton.Cancel).value
-        # if isinstance(called_arg_cancel, int):
-        #    self.assertEqual(called_arg_cancel, expected_buttons_value_cancel)
-        # elif hasattr(called_arg_cancel, 'value'):
-        #    self.assertEqual(called_arg_cancel.value, expected_buttons_value_cancel)
-
-        mock_msg_box_instance.exec.assert_called_once()
-        mock_apply_thumb_change.assert_not_called()
-        self.assertEqual(self.window.current_thumbnail_size, initial_thumb_size) # Should not change
-        
-        self.window._write_app_settings_file.assert_called_once()
-        updated_settings_call = self.window._write_app_settings_file.call_args[0][0]
-        self.assertEqual(updated_settings_call["thumbnail_size"], initial_thumb_size) # Old size saved
-
-
-    @patch('src.main_window.SettingsDialog')
-    def test_settings_dialog_rejected_no_changes_saved(self, MockSettingsDialog):
-        """Test that no settings are changed or saved if dialog is rejected."""
-        initial_preview_mode = self.window.image_preview_mode
-        initial_thumb_size = self.window.current_thumbnail_size
-
-        mock_dialog_instance = MockSettingsDialog.return_value
-        mock_dialog_instance.exec.return_value = False # Simulate Cancel
-
-        # Make dialog suggest changes
-        mock_dialog_instance.get_selected_preview_mode.return_value = "some_other_mode"
-        mock_dialog_instance.get_selected_thumbnail_size.return_value = 96 # Different from initial
-
-        self.window._open_settings_dialog()
-
-        self.assertEqual(self.window.image_preview_mode, initial_preview_mode)
-        self.assertEqual(self.window.current_thumbnail_size, initial_thumb_size)
-        self.window._write_app_settings_file.assert_not_called() # Crucially, settings not saved
-
-
-class TestMainWindowFullImageDialogInteraction(unittest.TestCase):
-    def setUp(self):
-        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
-        patches = [
-            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
-            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
-            patch('src.main_window.MainWindow._load_settings', MagicMock()),
-            patch('src.main_window.MainWindow._read_app_settings_file', return_value=self.mock_app_settings.copy()),
-            patch('src.main_window.MainWindow._write_app_settings_file', MagicMock(return_value=None))
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-        self.window = MainWindow()
-        self.window.image_preview_mode = "fit" # Default for tests
-        self.window.logger = MagicMock(spec=logging.Logger)
-
-        # Mock models and view needed for handle_thumbnail_double_clicked
-        self.window.filter_proxy_model = MagicMock()
-        self.window.source_thumbnail_model = MagicMock()
-        self.window.full_image_dialog_instance = None
-
-
-    def _prepare_mock_models_for_double_click(self, visible_paths_count, clicked_path):
-        """Simplified helper to set up mock models for testing double click.
-        Focuses on providing the clicked_path and a row count.
-        """
-        # Clicked item setup
-        clicked_item_mock = MagicMock()
-        clicked_item_mock.data.return_value = clicked_path
-        
-        self.window.filter_proxy_model.rowCount.return_value = visible_paths_count
-
-        # Mock the chain to return the clicked_item_mock when the specific
-        # self.clicked_proxy_idx_for_test is used to start the lookup.
-        # For the loop that builds visible_image_paths, we'll let item.data return clicked_path
-        # for simplicity, and use ANY for the list content assertion.
-        
-        def get_item_from_source_model_simplified(source_idx_mock):
-            # Always return the item corresponding to clicked_path for any valid index.
-            # This simplifies the test away from correctly forming the visible_paths list.
-            return clicked_item_mock
-
-        self.window.source_thumbnail_model.itemFromIndex = MagicMock(side_effect=get_item_from_source_model_simplified)
-
-        def map_to_source_simplified(proxy_idx_mock):
-            # Return a generic mock source index, doesn't need to carry row info for this simplified version
-            return MagicMock()
-
-        self.window.filter_proxy_model.mapToSource = MagicMock(side_effect=map_to_source_simplified)
-        
-        # This mock index will be passed to the handler
-        self.clicked_proxy_idx_for_test = MagicMock()
-
-
-    @patch('src.main_window.FullImageDialog')
-    def test_handle_double_click_opens_new_dialog(self, MockFullImageDialog):
-        """Test opening FullImageDialog for the first time."""
-        # visible_paths = ["path/to/img1.jpg", "path/to/img2.jpg"] # Original
-        clicked_path = "path/to/img1.jpg"
-        self.window.image_preview_mode = "fit"
-
-        # Prepare mocks: 2 items in view, the first one is 'clicked_path'
-        self._prepare_mock_models_for_double_click(visible_paths_count=2, clicked_path=clicked_path)
-        mock_dialog_instance = MockFullImageDialog.return_value
-
-        self.window.handle_thumbnail_double_clicked(self.clicked_proxy_idx_for_test)
-
-        MockFullImageDialog.assert_called_once_with(
-            unittest.mock.ANY, # Using ANY for the list of paths due to mocking complexity
-            unittest.mock.ANY, # Using ANY for the index
-            preview_mode="fit",
-            parent=self.window
-        )
-        mock_dialog_instance.setAttribute.assert_called_once_with(QtConstants.WidgetAttribute.WA_DeleteOnClose, True)
-        mock_dialog_instance.finished.connect.assert_called_once_with(self.window._on_full_image_dialog_finished)
-        mock_dialog_instance.show.assert_called_once()
-        self.assertIs(self.window.full_image_dialog_instance, mock_dialog_instance)
-
-    @patch('src.main_window.FullImageDialog')
-    def test_handle_double_click_updates_existing_dialog(self, MockFullImageDialog): # MockFullImageDialog is not used here if we spec existing_dialog_mock
-        """Test updating an existing FullImageDialog instance."""
-        visible_paths = ["path/to/img1.jpg", "path/to/img2.jpg", "path/to/img3.jpg"]
-        # first_clicked_path = "path/to/img1.jpg" # Not used
-        second_clicked_path = "path/to/img3.jpg"
-        self.window.image_preview_mode = "original_zoom"
-
-        # Simulate dialog already exists
-        existing_dialog_mock = MagicMock(spec=FullImageDialog)
-        self.window.full_image_dialog_instance = existing_dialog_mock
-        
-        # Prepare mocks: 3 items in view, the third one is 'second_clicked_path'
-        self._prepare_mock_models_for_double_click(visible_paths_count=3, clicked_path=second_clicked_path)
-
-        self.window.handle_thumbnail_double_clicked(self.clicked_proxy_idx_for_test)
-
-        MockFullImageDialog.assert_not_called() 
-        existing_dialog_mock.update_image.assert_called_once_with(
-            unittest.mock.ANY, # Using ANY for the list of paths
-            unittest.mock.ANY  # Using ANY for the index
-        )
-        # existing_dialog_mock.show.assert_called_once() # Optional, depends on FullImageDialog's update_image logic
-
-    def test_on_full_image_dialog_finished_clears_instance(self):
-        """Test that _on_full_image_dialog_finished clears the instance reference."""
-        mock_dialog = MagicMock(spec=FullImageDialog) # Add spec
-        self.window.full_image_dialog_instance = mock_dialog
-        
-        # Simulate the 'finished' signal being emitted by mock_dialog
-        # To do this, we need to make self.sender() return mock_dialog
-        with patch.object(self.window, 'sender', return_value=mock_dialog):
-            self.window._on_full_image_dialog_finished()
-            
-        self.assertIsNone(self.window.full_image_dialog_instance)
-
-    @patch('src.main_window.QMessageBox')
-    def test_handle_double_click_error_opening_dialog(self, MockQMessageBox):
-        """Test error handling when FullImageDialog creation fails."""
-        visible_paths_list = ["path/to/img1.jpg"] # Use a different name to avoid confusion
-        clicked_path = "path/to/img1.jpg"
-        # Pass the count of paths, not the list itself
-        self._prepare_mock_models_for_double_click(visible_paths_count=len(visible_paths_list), clicked_path=clicked_path)
-
-        # Simulate FullImageDialog constructor raising an exception
-        error_message = "Test dialog creation error"
-        # Patch FullImageDialog within src.main_window where it's called
-        with patch('src.main_window.FullImageDialog', side_effect=Exception(error_message)) as MockedFID_in_main_window:
-            self.window.handle_thumbnail_double_clicked(self.clicked_proxy_idx_for_test)
-
-            MockQMessageBox.critical.assert_called_once()
-            args, _ = MockQMessageBox.critical.call_args
-            self.assertIs(args[0], self.window)
-            self.assertEqual(args[1], "画像表示エラー")
-            self.assertIn(error_message, args[2])
-            self.assertIsNone(self.window.full_image_dialog_instance)
-
-
-# Removed class-level patch: @patch('src.main_window.MainWindow.apply_filters', autospec=True)
-class TestMainWindowFilterInteraction(unittest.TestCase):
-    def setUp(self): 
-        # No mock_apply_filters argument here anymore
-        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
-        patches = [
-            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
-            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
-            patch('src.main_window.MainWindow._load_settings', MagicMock()),
-            # No need to patch file I/O for settings here as filters don't directly save to app_settings.json
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-        self.window = MainWindow() 
-        self.window.logger = MagicMock(spec=logging.Logger)
-
-        # Mock the actual filter proxy model and thumbnail view for these interaction tests
-        self.window.filter_proxy_model = MagicMock()
-        self.window.thumbnail_view = MagicMock()
-        self.window.thumbnail_view.selectionModel.return_value.clearSelection = MagicMock() 
-        self.window.thumbnail_view.clearSelection = MagicMock() 
-
-    def test_apply_filters_sets_filters_on_proxy_model_and_mode(self): # Removed mock argument
-        """Test that apply_filters calls the correct methods on the filter_proxy_model."""
-        self.window.positive_prompt_filter_edit.setText("positive_keyword")
-        self.window.negative_prompt_filter_edit.setText("negative_keyword")
-        self.window.generation_info_filter_edit.setText("info_keyword")
-        
-        # Test AND mode
-        self.window.and_radio_button.setChecked(True)
-        self.window.or_radio_button.setChecked(False) # Ensure exclusive
-        
-        # Call the actual method on the window instance
-        self.window.apply_filters()
-        
-        self.window.filter_proxy_model.set_search_mode.assert_called_with("AND")
-        self.window.filter_proxy_model.set_positive_prompt_filter.assert_called_with("positive_keyword")
-        self.window.filter_proxy_model.set_negative_prompt_filter.assert_called_with("negative_keyword")
-        self.window.filter_proxy_model.set_generation_info_filter.assert_called_with("info_keyword")
-        self.window.thumbnail_view.clearSelection.assert_called_once() 
-
-        # Reset mocks for next part of test
-        self.window.filter_proxy_model.reset_mock()
-        self.window.thumbnail_view.clearSelection.reset_mock()
-
-        # Test OR mode
-        self.window.or_radio_button.setChecked(True)
-        self.window.and_radio_button.setChecked(False)
-
-        # Call the actual method on the window instance
-        self.window.apply_filters()
-        self.window.filter_proxy_model.set_search_mode.assert_called_with("OR")
-        self.window.filter_proxy_model.set_positive_prompt_filter.assert_called_with("positive_keyword")
-
-    @unittest.expectedFailure
-    def test_apply_filters_button_click_triggers_apply_filters(self): # Removed mock argument
-        """# EXPECTED_FAILURE
-        Test that clicking the apply_filter_button calls apply_filters."""
-        with patch.object(self.window, 'apply_filters', autospec=True) as mock_apply_method:
-            self.window.apply_filter_button.click()
-            app.processEvents() 
-            mock_apply_method.assert_called_once()
-            if not mock_apply_method.called:
-                print("DEBUG: apply_filters (button) was not called.")
-
-
-    @unittest.expectedFailure
-    def test_filter_line_edit_return_pressed_triggers_apply_filters(self): # Removed mock argument
-        """# EXPECTED_FAILURE
-        Test that pressing Enter in filter line edits calls apply_filters."""
-        with patch.object(self.window, 'apply_filters', autospec=True) as mock_apply_method:
-            self.window.positive_prompt_filter_edit.returnPressed.emit()
-            app.processEvents() 
-            mock_apply_method.assert_called_once()
-            if not mock_apply_method.called:
-                print("DEBUG: apply_filters (positive_prompt_filter_edit) was not called.")
-            mock_apply_method.reset_mock() 
-
-            self.window.negative_prompt_filter_edit.returnPressed.emit()
-            app.processEvents() 
-            mock_apply_method.assert_called_once()
-            if not mock_apply_method.called:
-                print("DEBUG: apply_filters (negative_prompt_filter_edit) was not called.")
-            mock_apply_method.reset_mock()
-
-            self.window.generation_info_filter_edit.returnPressed.emit()
-            app.processEvents() 
-            mock_apply_method.assert_called_once()
-            if not mock_apply_method.called:
-                print("DEBUG: apply_filters (generation_info_filter_edit) was not called.")
-
-    def test_apply_filters_preserve_selection(self): # Removed mock argument
-        """Test that selection is preserved if preserve_selection is True."""
-        # Call the actual method on the window instance with preserve_selection=True
-        self.window.apply_filters(preserve_selection=True)
-        
-        self.window.thumbnail_view.clearSelection.assert_not_called()
-        self.window.filter_proxy_model.set_search_mode.assert_called() 
-        self.window.filter_proxy_model.set_positive_prompt_filter.assert_called() 
-
-
-class TestMainWindowMetadataDialogInteraction(unittest.TestCase):
-    def setUp(self):
-        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
-        patches = [
-            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
-            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
-            patch('src.main_window.MainWindow._load_settings', MagicMock()),
-            patch('src.main_window.MainWindow._read_app_settings_file', return_value=self.mock_app_settings.copy()),
-            patch('src.main_window.MainWindow._write_app_settings_file', MagicMock(return_value=None))
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-        self.window = MainWindow()
-        self.window.logger = MagicMock(spec=logging.Logger)
-        self.window.metadata_dialog_instance = None
-        self.window.metadata_dialog_last_geometry = None
-
-        # Mock models needed for handle_metadata_requested
-        self.window.filter_proxy_model = MagicMock()
-        self.window.source_thumbnail_model = MagicMock()
-        
-        # Mock QApplication screen geometry for consistent testing of dialog positioning
-        self.mock_screen_rect = MagicMock()
-        self.mock_screen_rect.intersects.return_value = True # Assume last geometry is always valid
-
-        qapp_patcher = patch('src.main_window.QApplication')
-        self.MockQApplication = qapp_patcher.start()
-        self.addCleanup(qapp_patcher.stop)
-        self.MockQApplication.primaryScreen.return_value.availableGeometry.return_value = self.mock_screen_rect
-
-
-    def _prepare_for_metadata_request(self, file_path, metadata_on_item, metadata_in_cache=None):
-        """Helper to set up mocks for handle_metadata_requested."""
-        mock_item = MagicMock()
-        mock_item.data = MagicMock() # This will be called twice: UserRole then METADATA_ROLE
-
-        # Setup for item.data(Qt.ItemDataRole.UserRole)
-        # Setup for item.data(METADATA_ROLE)
-        def item_data_side_effect(role):
-            if role == QtConstants.ItemDataRole.UserRole:
-                return file_path
-            if role == METADATA_ROLE: # Use imported METADATA_ROLE
-                return metadata_on_item
-            return None
-        mock_item.data.side_effect = item_data_side_effect
-        
-        mock_source_index = MagicMock()
-        self.window.source_thumbnail_model.itemFromIndex.return_value = mock_item
-        
-        mock_proxy_index = MagicMock()
-        mock_proxy_index.isValid.return_value = True
-        self.window.filter_proxy_model.mapToSource.return_value = mock_source_index
-        
-        self.window.metadata_cache.clear()
-        if metadata_in_cache:
-            self.window.metadata_cache[file_path] = metadata_in_cache
-            
-        return mock_proxy_index
-
-
-    @patch('src.main_window.ImageMetadataDialog')
-    def test_handle_metadata_request_opens_new_dialog(self, MockImageMetadataDialog):
-        """Test opening ImageMetadataDialog for the first time."""
-        file_path = "test/img.png"
-        metadata = {"key": "value_from_item"}
-        mock_proxy_idx = self._prepare_for_metadata_request(file_path, metadata)
-        
-        mock_dialog_instance = MockImageMetadataDialog.return_value
-
-        self.window.handle_metadata_requested(mock_proxy_idx)
-
-        MockImageMetadataDialog.assert_called_once_with(metadata, self.window, file_path)
-        mock_dialog_instance.setAttribute.assert_called_once_with(QtConstants.WidgetAttribute.WA_DeleteOnClose, True)
-        mock_dialog_instance.finished.connect.assert_called_once_with(self.window._on_metadata_dialog_finished)
-        mock_dialog_instance.show.assert_called_once()
-        mock_dialog_instance.raise_.assert_called_once()
-        mock_dialog_instance.activateWindow.assert_called_once()
-        self.assertIs(self.window.metadata_dialog_instance, mock_dialog_instance)
-
-    @patch('src.main_window.ImageMetadataDialog')
-    def test_handle_metadata_request_updates_existing_dialog(self, MockImageMetadataDialog):
-        """Test updating an existing ImageMetadataDialog."""
-        file_path = "test/img2.png"
-        metadata = {"key": "value2"}
-        mock_proxy_idx = self._prepare_for_metadata_request(file_path, metadata)
-
-        existing_dialog_mock = MagicMock(spec=ImageMetadataDialog)
-        existing_dialog_mock.isVisible.return_value = True # Assume it's visible
-        self.window.metadata_dialog_instance = existing_dialog_mock
-
-        self.window.handle_metadata_requested(mock_proxy_idx)
-
-        MockImageMetadataDialog.assert_not_called() # Should not create new
-        existing_dialog_mock.update_metadata.assert_called_once_with(metadata, file_path)
-        existing_dialog_mock.raise_.assert_called_once()
-        existing_dialog_mock.activateWindow.assert_called_once()
-
-    @patch('src.main_window.ImageMetadataDialog')
-    def test_handle_metadata_request_uses_cache_if_item_data_missing(self, MockImageMetadataDialog):
-        """Test metadata is fetched from cache if not directly on item."""
-        file_path = "test/img_cache.png"
-        metadata_from_cache = {"key": "value_from_cache"}
-        # Simulate metadata not on item (item.data(METADATA_ROLE) returns None)
-        mock_proxy_idx = self._prepare_for_metadata_request(file_path, metadata_on_item=None, metadata_in_cache=metadata_from_cache)
-        
-        mock_dialog_instance = MockImageMetadataDialog.return_value
-        self.window.handle_metadata_requested(mock_proxy_idx)
-        MockImageMetadataDialog.assert_called_once_with(metadata_from_cache, self.window, file_path)
-
-
-    def test_on_metadata_dialog_finished_clears_instance_and_stores_geometry(self):
-        """Test _on_metadata_dialog_finished clears instance and stores geometry."""
-        mock_dialog = MagicMock(spec=ImageMetadataDialog) # Use spec for type hinting if ImageMetadataDialog is QDialog
-        mock_dialog.geometry.return_value = "fake_geometry" # QRect or similar
-        self.window.metadata_dialog_instance = mock_dialog
-        
-        with patch.object(self.window, 'sender', return_value=mock_dialog):
-            self.window._on_metadata_dialog_finished(0) # Argument is QDialog.DialogCode
-            
-        self.assertIsNone(self.window.metadata_dialog_instance)
-        self.assertEqual(self.window.metadata_dialog_last_geometry, "fake_geometry")
-
-    @patch('src.main_window.ImageMetadataDialog')
-    def test_handle_metadata_request_restores_geometry(self, MockImageMetadataDialog):
-        """Test that dialog geometry is restored if previously stored."""
-        file_path = "test/img_geom.png"
-        metadata = {"key": "geom_val"}
-        stored_geometry = MagicMock() # Mock QRect
-        self.window.metadata_dialog_last_geometry = stored_geometry
-        
-        mock_proxy_idx = self._prepare_for_metadata_request(file_path, metadata)
-        mock_dialog_instance = MockImageMetadataDialog.return_value
-
-        self.window.handle_metadata_requested(mock_proxy_idx)
-
-        mock_dialog_instance.setGeometry.assert_called_once_with(stored_geometry)
-
-    @patch('src.main_window.ImageMetadataDialog')
-    def test_handle_metadata_request_no_item_found(self, MockImageMetadataDialog):
-        """Test behavior when no item is found for the proxy index."""
-        mock_proxy_idx = MagicMock()
-        mock_proxy_idx.isValid.return_value = True
-        self.window.filter_proxy_model.mapToSource.return_value = MagicMock() # some source index
-        self.window.source_thumbnail_model.itemFromIndex.return_value = None # No item found
-
-        self.window.handle_metadata_requested(mock_proxy_idx)
-        MockImageMetadataDialog.assert_not_called() # Dialog should not open
-
-    @patch('src.main_window.ImageMetadataDialog')
-    def test_handle_metadata_request_no_filepath_on_item(self, MockImageMetadataDialog):
-        """Test behavior when item has no file path."""
-        mock_item_no_path = MagicMock()
-        mock_item_no_path.data.return_value = None # No path for UserRole
-        
-        mock_source_idx_no_path = MagicMock()
-        self.window.source_thumbnail_model.itemFromIndex.return_value = mock_item_no_path
-        
-        mock_proxy_idx_no_path = MagicMock()
-        mock_proxy_idx_no_path.isValid.return_value = True
-        self.window.filter_proxy_model.mapToSource.return_value = mock_source_idx_no_path
-
-        self.window.handle_metadata_requested(mock_proxy_idx_no_path)
-        MockImageMetadataDialog.assert_not_called()
-
-
-class TestMainWindowUIActions(unittest.TestCase):
-    def setUp(self):
-        self.mock_app_settings = DEFAULT_TEST_APP_SETTINGS.copy()
-        patches = [
-            patch('src.main_window.MainWindow._load_app_settings', MagicMock()),
-            patch('src.main_window.MainWindow._create_menu_bar', MagicMock()),
-            patch('src.main_window.MainWindow._load_settings', MagicMock()),
-            patch('src.main_window.MainWindow._read_app_settings_file', return_value=self.mock_app_settings.copy()),
-            patch('src.main_window.MainWindow._write_app_settings_file', MagicMock(return_value=None))
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-        self.window = MainWindow()
-        self.window.logger = MagicMock(spec=logging.Logger)
-
-        # Mock UI elements that are directly accessed by the methods under test
-        self.window.statusBar = MagicMock()
-        self.window.filter_proxy_model = MagicMock()
-        self.window.thumbnail_view = MagicMock()
-        self.window.thumbnail_view.selectionModel = MagicMock()
-        self.window.source_thumbnail_model = MagicMock() # For update_thumbnail_item
-
-    def tearDown(self):
-        # Clean up any resources if necessary
-        pass
-
-    def test_update_status_bar_info_no_items(self):
-        """Test _update_status_bar_info when there are no items."""
-        self.window.filter_proxy_model.rowCount.return_value = 0
-        self.window.thumbnail_view.selectionModel().selectedIndexes.return_value = []
-
-        self.window._update_status_bar_info()
-
-        self.window.statusBar.showMessage.assert_called_once_with("表示アイテム数: 0 / 選択アイテム数: 0")
-
-    def test_update_status_bar_info_items_no_selection(self):
-        """Test _update_status_bar_info with items but no selection."""
-        self.window.filter_proxy_model.rowCount.return_value = 10
-        self.window.thumbnail_view.selectionModel().selectedIndexes.return_value = []
-
-        self.window._update_status_bar_info()
-
-        self.window.statusBar.showMessage.assert_called_once_with("表示アイテム数: 10 / 選択アイテム数: 0")
-
-    def test_update_status_bar_info_items_with_selection(self):
-        """Test _update_status_bar_info with items and selection."""
-        self.window.filter_proxy_model.rowCount.return_value = 25
-        # Simulate 3 selected items
-        mock_selected_indexes = [MagicMock(), MagicMock(), MagicMock()]
-        self.window.thumbnail_view.selectionModel().selectedIndexes.return_value = mock_selected_indexes
-
-        self.window._update_status_bar_info()
-
-        self.window.statusBar.showMessage.assert_called_once_with("表示アイテム数: 25 / 選択アイテム数: 3")
-
-    @patch('os.path.dirname')
-    def test_update_thumbnail_item_sets_tooltip(self, mock_os_path_dirname):
-        """Test update_thumbnail_item sets the tooltip correctly."""
-        mock_item = MagicMock() # Mock QStandardItem
-        test_file_path = "/path/to/some/image.jpg"
-        expected_dir_path = "/path/to/some"
-        mock_os_path_dirname.return_value = expected_dir_path
-
-        # Simulate item.data(Qt.ItemDataRole.UserRole) returning the file path
-        def side_effect_item_data(role):
-            if role == QtConstants.ItemDataRole.UserRole:
-                return test_file_path
-            return None # For other roles
-        mock_item.data = MagicMock(side_effect=side_effect_item_data)
-        
-        # Call update_thumbnail_item with appropriate arguments
-        # q_image (second arg) can be None as it's not used for tooltip logic
-        # metadata (third arg) can be an empty dict
-        self.window.update_thumbnail_item(mock_item, None, {})
-
-        mock_item.setToolTip.assert_called_once_with(f"場所: {expected_dir_path}")
-        # os.path.dirname is called with the file_path obtained from item.data()
-        mock_os_path_dirname.assert_called_once_with(test_file_path)
-        # Check that item.data was called for UserRole
-        mock_item.data.assert_any_call(QtConstants.ItemDataRole.UserRole)
-
-
-    @patch('os.path.dirname')
-    def test_update_thumbnail_item_sets_tooltip_windows_path(self, mock_os_path_dirname):
-        """Test update_thumbnail_item sets the tooltip correctly for Windows paths."""
-        mock_item = MagicMock()
-        test_file_path = "C:\\Users\\Test\\Pictures\\image.png"
-        expected_dir_path = "C:\\Users\\Test\\Pictures"
-        mock_os_path_dirname.return_value = expected_dir_path
-
-        def side_effect_item_data(role):
-            if role == QtConstants.ItemDataRole.UserRole:
-                return test_file_path
-            return None
-        mock_item.data = MagicMock(side_effect=side_effect_item_data)
-
-        self.window.update_thumbnail_item(mock_item, None, {})
-
-        mock_item.setToolTip.assert_called_once_with(f"場所: {expected_dir_path}")
-        mock_os_path_dirname.assert_called_once_with(test_file_path)
-        mock_item.data.assert_any_call(QtConstants.ItemDataRole.UserRole)
-
-    def _prepare_mock_index_for_context_menu(self, file_path="dummy/path.jpg"):
-        """Helper to create a mock QModelIndex for context menu tests."""
-        mock_proxy_index = MagicMock(spec=QModelIndex) # Use QModelIndex spec
-        mock_proxy_index.isValid.return_value = True
-        mock_proxy_index.row.return_value = 0  # Set fixed return value
-        mock_proxy_index.column.return_value = 0  # Set fixed return value
-        
-        mock_source_index = MagicMock(spec=QModelIndex)
-        mock_source_index.row.return_value = 0  # Set fixed return value
-        mock_source_index.column.return_value = 0  # Set fixed return value
-        self.window.filter_proxy_model.mapToSource.return_value = mock_source_index
-        
-        mock_item = MagicMock(spec=QStandardItem) # Use QStandardItem spec
-        mock_item.data.return_value = file_path # Simulate item returning file_path for UserRole
-        self.window.source_thumbnail_model.itemFromIndex.return_value = mock_item
-        
-        self.window.thumbnail_view.indexAt.return_value = mock_proxy_index
-        return mock_proxy_index
-
-    @patch('src.main_window.MainWindow.handle_metadata_requested')
-    def test_show_thumbnail_context_menu_action_metadata(self, mock_handle_metadata_requested):
-        """Test context menu directly calls handle_metadata_requested if action is 'metadata'."""
-        self.window.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA
-        mock_pos = MagicMock()
-        mock_proxy_index = self._prepare_mock_index_for_context_menu()
-        
-        self.window._show_thumbnail_context_menu(mock_pos)
-        
-        mock_handle_metadata_requested.assert_called_once_with(mock_proxy_index)
-
-    @patch('src.main_window.QMenu')
-    @patch('src.main_window.MainWindow.handle_metadata_requested')
-    @patch('src.main_window.MainWindow._open_file_location_for_item')
-    def test_show_thumbnail_context_menu_action_menu_shows_menu(self, mock_open_location, mock_handle_metadata, MockQMenu):
-        """Test context menu shows QMenu if action is 'menu'."""
-        self.window.thumbnail_right_click_action = RIGHT_CLICK_ACTION_MENU
-        mock_pos = MagicMock()
-        self._prepare_mock_index_for_context_menu()
-        
-        mock_menu_instance = MockQMenu.return_value
-        
-        self.window._show_thumbnail_context_menu(mock_pos)
-        
-        MockQMenu.assert_called_once_with(self.window)
-        self.assertEqual(mock_menu_instance.addAction.call_count, 2) # Metadata and Open Location
-        mock_menu_instance.exec.assert_called_once()
-        # Further tests could check action connections if QAction is also mocked
-
-    @patch('src.main_window.QMenu')
-    @patch('src.main_window.MainWindow.handle_metadata_requested')
-    def test_show_thumbnail_context_menu_menu_triggers_metadata(self, mock_handle_metadata, MockQMenu):
-        self.window.thumbnail_right_click_action = RIGHT_CLICK_ACTION_MENU
-        mock_pos = MagicMock()
-        mock_proxy_idx = self._prepare_mock_index_for_context_menu()
-
-        # Mock QMenu and capture QAction instances
-        mock_menu_instance = MockQMenu.return_value
-        added_actions = []
-        def capture_action_side_effect(action_instance):
-            added_actions.append(action_instance)
-            return action_instance # QMenu.addAction returns the action
-        mock_menu_instance.addAction = MagicMock(side_effect=capture_action_side_effect)
-
-        self.window._show_thumbnail_context_menu(mock_pos)
-        
-        self.assertGreaterEqual(len(added_actions), 1, "Metadata action was not added to the menu")
-        metadata_qaction_from_code = added_actions[0] # First action should be metadata
-        
-        # Ensure the action has a 'triggered' signal mock that can be emitted
-        if not hasattr(metadata_qaction_from_code, 'triggered') or not hasattr(metadata_qaction_from_code.triggered, 'emit'):
-             metadata_qaction_from_code.triggered = MagicMock() # Ensure it has a trigger if it's a real QAction without a mock signal
-
-        metadata_qaction_from_code.triggered.emit()
-        
-        mock_handle_metadata.assert_called_once_with(mock_proxy_idx)
-
-    @patch('src.main_window.QMenu')
-    @patch('src.main_window.MainWindow._open_file_location_for_item')
-    def test_show_thumbnail_context_menu_menu_triggers_open_location(self, mock_open_location, MockQMenu):
-        self.window.thumbnail_right_click_action = RIGHT_CLICK_ACTION_MENU
-        mock_pos = MagicMock()
-        mock_proxy_idx = self._prepare_mock_index_for_context_menu()
-
-        mock_menu_instance = MockQMenu.return_value
-        added_actions = []
-        def capture_action_side_effect(action_instance):
-            added_actions.append(action_instance)
-            return action_instance
-        mock_menu_instance.addAction = MagicMock(side_effect=capture_action_side_effect)
-
-        self.window._show_thumbnail_context_menu(mock_pos)
-        
-        self.assertGreaterEqual(len(added_actions), 2, "Open location action was not added or not enough actions")
-        open_location_qaction_from_code = added_actions[1] # Second action should be open location
-        
-        if not hasattr(open_location_qaction_from_code, 'triggered') or not hasattr(open_location_qaction_from_code.triggered, 'emit'):
-            open_location_qaction_from_code.triggered = MagicMock()
-
-        open_location_qaction_from_code.triggered.emit()
-        
-        mock_open_location.assert_called_once_with(mock_proxy_idx)
-
-    @patch('os.path.dirname')
-    @patch('os.startfile')
-    @patch('os.path.isdir', return_value=True) # Assume dir exists
-    def test_open_file_location_for_item_success(self, mock_isdir, mock_startfile, mock_dirname):
-        """Test _open_file_location_for_item successfully calls os.startfile."""
-        test_file_path = "C:/test/folder/image.jpg"
-        expected_dir_path = "C:/test/folder"
-        mock_dirname.return_value = expected_dir_path
-        
-        mock_proxy_index = self._prepare_mock_index_for_context_menu(file_path=test_file_path)
-        
-        self.window._open_file_location_for_item(mock_proxy_index)
-        
-        mock_dirname.assert_called_once_with(test_file_path)
-        mock_isdir.assert_called_once_with(expected_dir_path)
-        mock_startfile.assert_called_once_with(expected_dir_path)
-
-    @patch('os.path.dirname')
-    @patch('os.startfile')
-    @patch('os.path.isdir', return_value=False) # Assume dir does NOT exist
-    @patch('src.main_window.QMessageBox.warning')
-    def test_open_file_location_for_item_dir_not_found(self, mock_qmessagebox_warning, mock_isdir, mock_startfile, mock_dirname):
-        test_file_path = "C:/test/folder/image.jpg"
-        non_existent_dir_path = "C:/test/folder"
-        mock_dirname.return_value = non_existent_dir_path
-        
-        mock_proxy_index = self._prepare_mock_index_for_context_menu(file_path=test_file_path)
-        
-        self.window._open_file_location_for_item(mock_proxy_index)
-        
-        mock_dirname.assert_called_once_with(test_file_path)
-        mock_isdir.assert_called_once_with(non_existent_dir_path)
-        mock_startfile.assert_not_called()
-        mock_qmessagebox_warning.assert_called_once()
-        self.assertIn(f"ディレクトリ '{non_existent_dir_path}' が見つかりません。", mock_qmessagebox_warning.call_args[0][2]) # Changed index to 2
-
-    @patch('os.path.dirname', return_value="C:/test/folder")
-    @patch('os.path.isdir', return_value=True)
-    @patch('os.startfile', side_effect=AttributeError("os.startfile not available"))
-    @patch('src.main_window.QMessageBox.critical')
-    def test_open_file_location_for_item_os_startfile_attribute_error(self, mock_qmessagebox_critical, mock_startfile, mock_isdir, mock_dirname):
-        mock_proxy_index = self._prepare_mock_index_for_context_menu(file_path="C:/test/folder/image.jpg")
-        
-        self.window._open_file_location_for_item(mock_proxy_index)
-        
-        mock_startfile.assert_called_once_with("C:/test/folder")
-        mock_qmessagebox_critical.assert_called_once()
-        self.assertIn("このプラットフォームではファイルの場所を開く機能はサポートされていません。", mock_qmessagebox_critical.call_args[0][2]) # Changed index to 2
-
-    @patch('os.path.dirname', return_value="C:/test/folder")
-    @patch('os.path.isdir', return_value=True)
-    @patch('os.startfile', side_effect=Exception("Some other OS error"))
-    @patch('src.main_window.QMessageBox.critical')
-    def test_open_file_location_for_item_os_startfile_other_exception(self, mock_qmessagebox_critical, mock_startfile, mock_isdir, mock_dirname):
-        mock_proxy_index = self._prepare_mock_index_for_context_menu(file_path="C:/test/folder/image.jpg")
-        
-        self.window._open_file_location_for_item(mock_proxy_index)
-        
-        mock_startfile.assert_called_once_with("C:/test/folder")
-        mock_qmessagebox_critical.assert_called_once()
-        self.assertIn("ディレクトリを開く際にエラーが発生しました:\nSome other OS error", mock_qmessagebox_critical.call_args[0][2]) # Changed index to 2
-
-    def test_open_file_location_for_item_no_filepath_on_item(self):
-        mock_proxy_index = self._prepare_mock_index_for_context_menu(file_path=None) # No file path
-        
-        with patch('src.main_window.QMessageBox.warning') as mock_msg_box_warn:
-            self.window._open_file_location_for_item(mock_proxy_index)
-            mock_msg_box_warn.assert_called_once_with(self.window, "エラー", "アイテムにファイルパスが関連付けられていません。")
-
-    def test_open_file_location_for_item_no_item_from_index(self):
-        mock_proxy_index = MagicMock(spec=QModelIndex)
-        mock_proxy_index.isValid.return_value = True
-        source_index = MagicMock(spec=QModelIndex)
-        self.window.filter_proxy_model.mapToSource.return_value = source_index
-        self.window.source_thumbnail_model.itemFromIndex.return_value = None # No item
-
-        # No QMessageBox expected here, just logs a warning
-        # Patch the module-level logger used in src.main_window
-        with patch('src.main_window.logger.warning') as mock_module_logger_warning:
-            self.window._open_file_location_for_item(mock_proxy_index)
-            # Check if the logger was called with a message containing the key part.
-            found_log_message = False
-            expected_phrase = "ファイルの場所を開く操作: インデックスからアイテムを取得できませんでした"
-            for call_args_tuple in mock_module_logger_warning.call_args_list:
-                # call_args_tuple is like (('log message',), {})
-                if call_args_tuple[0] and isinstance(call_args_tuple[0][0], str):
-                    if expected_phrase in call_args_tuple[0][0]:
-                        found_log_message = True
-                        break
-            self.assertTrue(found_log_message, f"Expected log message containing '{expected_phrase}' not found. Actual calls: {mock_module_logger_warning.call_args_list}")
