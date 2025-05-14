@@ -42,7 +42,7 @@ class TestWCCreatorDialog(unittest.TestCase):
         )
         
         self.assertEqual(dialog.windowTitle(), "ワイルドカード作成")
-        self.assertTrue(dialog.prev_button.isEnabled())
+        self.assertFalse(dialog.prev_button.isEnabled()) # 初期状態では「前へ」は無効のはず
         self.assertTrue(dialog.next_button.isEnabled())
         self.assertEqual(dialog.image_index_label.text(), "1 / 2")
 

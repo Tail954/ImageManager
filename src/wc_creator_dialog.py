@@ -102,6 +102,10 @@ class WCCreatorDialog(QDialog):
         positive_prompt = metadata.get('positive_prompt', '')
         if not isinstance(positive_prompt, str): positive_prompt = ""
         prompt_lines = positive_prompt.split('\n')
+        # ★★★ 修正: positive_promptが空文字列の場合、prompt_linesは['']になるので、
+        # これを空のリストとして扱い、ループが実行されないようにする
+        if prompt_lines == ['']:
+            prompt_lines = []
         cached_states = self.checkbox_state_cache.get(index)
         for i, line_text in enumerate(prompt_lines):
             line_widget = QWidget(); line_layout = QHBoxLayout(line_widget); line_layout.setContentsMargins(0,0,0,0)

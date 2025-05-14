@@ -1,12 +1,19 @@
+# g:\vscodeGit\ImageManager\tests\test_settings_dialog.py
 import pytest
 import json # Added import
 from PyQt6.QtWidgets import QApplication, QWidget, QDialog # Added QDialog
+
+import sys
+import os
+# Ensure src directory is in Python path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QPainter, QColor
+from PyQt6.QtGui import QPainter, QColor, QPaintEvent # Added QPaintEvent for paintEvent test
 
 # Assuming src is in PYTHONPATH or tests are run from project root
 from src.settings_dialog import ThumbnailSizePreviewWidget, SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM
-from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU
+# FIX: Import WC_FORMAT_HASH_COMMENT from constants
+from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, WC_FORMAT_HASH_COMMENT
 
 
 # Fixture to create a QApplication instance for tests that need it
@@ -45,46 +52,21 @@ class TestThumbnailSizePreviewWidget:
         widget.set_size(size)
         
         # Mock QPainter methods
-        mock_painter = mocker.MagicMock(spec=QPainter)
-        
-        # To properly mock painter.drawRect, we need to ensure QPainter(widget) works.
-        # This is tricky without a full widget lifecycle.
-        # For simplicity, we'll assume the painter is correctly passed and focus on logic.
-        # We can't directly mock QPainter constructor easily with mocker.
-        # Instead, we can patch methods on an instance if we could get it.
+        # mock_painter = mocker.MagicMock(spec=QPainter) # This mock is not used directly
 
-        # A common way to test paintEvent is to render the widget to a QPixmap and inspect it,
-        # but that's more of an integration test. For unit test, mocking draw calls is preferred.
-        # Let's try to patch QPainter's methods globally for the duration of this test.
-        
-        # mocker.patch('PyQt6.QtGui.QPainter.drawRect') # Will be handled by mock_qpainter_instance
-        # mocker.patch('PyQt6.QtGui.QPainter.drawText')
-        # mocker.patch('PyQt6.QtGui.QPainter.setPen')
-        # mocker.patch('PyQt6.QtGui.QPainter.setBrush')
-        # mocker.patch('PyQt6.QtGui.QPainter.setRenderHint')
-
-        # Create a dummy QPaintEvent
-        from PyQt6.QtGui import QPaintEvent
-        from PyQt6.QtCore import QRect
-        
-        # Ensure widget has a size for paintEvent calculations
-        widget.resize(widget.minimumSizeHint()) 
-        
-        # Call paintEvent directly
-        # QPainter needs to be constructed within paintEvent, so we can't pass a mock directly.
-        # We will rely on the global patches of QPainter methods.
-        
-        # This is a simplified way to invoke paintEvent for testing logic.
-        # In a real scenario, the event loop would handle this.
-        # We need to ensure QPainter(self) inside paintEvent uses the patched methods.
-        
         # To make QPainter(self) use a mock, we can patch QPainter itself.
         # The QPainter instance is created inside paintEvent.
         # We need to ensure that when `QPainter(self)` is called, it uses our mock.
         mock_painter_instance = mocker.MagicMock(spec=QPainter)
         mocker.patch('src.settings_dialog.QPainter', return_value=mock_painter_instance)
 
-
+        # Create a dummy QPaintEvent
+        from PyQt6.QtCore import QRect # QRect is already imported, but good to be explicit
+        
+        # Ensure widget has a size for paintEvent calculations
+        widget.resize(widget.minimumSizeHint()) 
+        
+        # Call paintEvent directly
         widget.paintEvent(QPaintEvent(QRect(0,0,widget.width(), widget.height())))
 
         assert mock_painter_instance.drawRect.call_count == expected_rect_count
@@ -94,10 +76,7 @@ class TestThumbnailSizePreviewWidget:
         # Check if drawText was called with the expected text.
         called_with_expected_text = False
         for call_args in mock_painter_instance.drawText.call_args_list:
-            # args[1] is usually the text for painter.drawText(QRect, flags, text)
-            # args[2] for painter.drawText(x, y, text)
-            # args[0] for painter.drawText(QPointF, text)
-            # Check all string arguments in the call
+            # drawText has several overloads. Check if any string argument contains the expected text.
             if any(isinstance(arg, str) and expected_text in arg for arg in call_args.args):
                 called_with_expected_text = True
                 break
@@ -113,15 +92,17 @@ class TestSettingsDialog:
 
     @pytest.fixture
     def dialog(self, qt_app, mocker):
-        # Mock _load_preview_mode_setting to avoid file IO during most tests
-        mocker.patch.object(SettingsDialog, '_load_preview_mode_setting', 
+        # FIX: Mock _load_settings_for_dialog_display instead of _load_preview_mode_setting
+        mocker.patch.object(SettingsDialog, '_load_settings_for_dialog_display', 
                             return_value={"image_preview_mode": self.DEFAULT_PREVIEW_MODE})
         
         dialog_instance = SettingsDialog(
             current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
             available_thumbnail_sizes=self.AVAILABLE_SIZES,
             current_preview_mode=self.DEFAULT_PREVIEW_MODE,
-            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION # Pass new arg
+            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION, # Pass new arg
+            # FIX: Add current_wc_comment_format argument
+            current_wc_comment_format=WC_FORMAT_HASH_COMMENT # Use a default value from constants
         )
         return dialog_instance
 
@@ -131,11 +112,19 @@ class TestSettingsDialog:
         assert dialog.available_thumbnail_sizes == self.AVAILABLE_SIZES
         assert dialog.initial_preview_mode == self.DEFAULT_PREVIEW_MODE
         assert dialog.initial_right_click_action == self.DEFAULT_RIGHT_CLICK_ACTION
+        # FIX: Add assertion for initial_wc_comment_format
+        assert dialog.initial_wc_comment_format == WC_FORMAT_HASH_COMMENT # Check if the passed value is stored
 
         # Check slider initialization
         assert dialog.thumbnail_size_slider.minimum() == 0
         assert dialog.thumbnail_size_slider.maximum() == len(self.AVAILABLE_SIZES) - 1
-        assert dialog.thumbnail_size_slider.value() == self.AVAILABLE_SIZES.index(self.DEFAULT_THUMBNAIL_SIZE)
+        # Use try-except as index() might raise ValueError if default size is not in available sizes
+        try:
+            expected_slider_value = self.AVAILABLE_SIZES.index(self.DEFAULT_THUMBNAIL_SIZE)
+            assert dialog.thumbnail_size_slider.value() == expected_slider_value
+        except ValueError:
+            pytest.fail(f"Default thumbnail size {self.DEFAULT_THUMBNAIL_SIZE} not found in available sizes {self.AVAILABLE_SIZES}")
+
 
         # Check radio button initialization
         if self.DEFAULT_PREVIEW_MODE == PREVIEW_MODE_FIT:
@@ -159,6 +148,12 @@ class TestSettingsDialog:
         else: # RIGHT_CLICK_ACTION_MENU
             assert not dialog.metadata_action_radio.isChecked()
             assert dialog.menu_action_radio.isChecked()
+
+        # FIX: Add WC Creator comment format combo box initialization check
+        assert dialog.wc_comment_format_combo is not None
+        # Check that the correct item is selected based on initial_wc_comment_format
+        expected_combo_index = dialog.wc_comment_format_combo.findData(dialog.initial_wc_comment_format)
+        assert dialog.wc_comment_format_combo.currentIndex() == expected_combo_index
 
 
     def test_thumbnail_slider_changes_preview(self, dialog, mocker):
@@ -199,31 +194,44 @@ class TestSettingsDialog:
         dialog.metadata_action_radio.setChecked(False)
         assert dialog.get_selected_right_click_action() == RIGHT_CLICK_ACTION_MENU
         
+    # FIX: Add test for get_selected_wc_comment_format
+    def test_get_selected_wc_comment_format(self, dialog):
+        # Select the second item (assuming it's BRACKET_COMMENT)
+        dialog.wc_comment_format_combo.setCurrentIndex(1)
+        assert dialog.get_selected_wc_comment_format() == dialog.wc_comment_format_combo.itemData(1)
+
+        # Select the first item (assuming it's HASH_COMMENT)
+        dialog.wc_comment_format_combo.setCurrentIndex(0)
+        assert dialog.get_selected_wc_comment_format() == dialog.wc_comment_format_combo.itemData(0)
+
+
     def test_accept_dialog(self, dialog, mocker):
         mock_super_accept = mocker.patch.object(QDialog, 'accept') # Mock QDialog.accept
-        mock_save_specific = mocker.patch.object(dialog, '_save_dialog_specific_settings', return_value=True)
+        # _save_dialog_specific_settings was removed from SettingsDialog.accept
+        # mock_save_specific = mocker.patch.object(dialog, '_save_dialog_specific_settings', return_value=True)
 
         dialog.accept()
 
-        mock_save_specific.assert_called_once()
+        # mock_save_specific.assert_called_once() # Removed
         mock_super_accept.assert_called_once() # Ensure dialog's accept is called
 
-    def test_save_dialog_specific_settings(self, dialog):
-        # Test saving PREVIEW_MODE_ORIGINAL_ZOOM
-        dialog.original_zoom_mode_radio.setChecked(True)
-        dialog.fit_mode_radio.setChecked(False) # Ensure other is not checked
-        dialog._save_dialog_specific_settings()
-        assert dialog.current_settings["image_preview_mode"] == PREVIEW_MODE_ORIGINAL_ZOOM
+    # _save_dialog_specific_settings was removed from SettingsDialog, so this test is no longer applicable
+    # def test_save_dialog_specific_settings(self, dialog):
+    #     # Test saving PREVIEW_MODE_ORIGINAL_ZOOM
+    #     dialog.original_zoom_mode_radio.setChecked(True)
+    #     dialog.fit_mode_radio.setChecked(False) # Ensure other is not checked
+    #     dialog._save_dialog_specific_settings()
+    #     assert dialog.current_settings["image_preview_mode"] == PREVIEW_MODE_ORIGINAL_ZOOM
 
-        # Test saving PREVIEW_MODE_FIT
-        dialog.fit_mode_radio.setChecked(True)
-        dialog.original_zoom_mode_radio.setChecked(False)
-        dialog._save_dialog_specific_settings()
-        assert dialog.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
+    #     # Test saving PREVIEW_MODE_FIT
+    #     dialog.fit_mode_radio.setChecked(True)
+    #     dialog.original_zoom_mode_radio.setChecked(False)
+    #     dialog._save_dialog_specific_settings()
+    #     assert dialog.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
 
-    # Test _load_preview_mode_setting with file operations (requires more setup or finer mocking)
-    def test_load_preview_mode_setting_file_exists(self, qt_app, tmp_path, mocker):
-        # This test will not use the dialog fixture to avoid its _load_preview_mode_setting mock
+    # Test _load_settings_for_dialog_display with file operations (requires more setup or finer mocking)
+    def test_load_settings_for_dialog_display_file_exists(self, qt_app, tmp_path, mocker):
+        # This test will not use the dialog fixture to avoid its _load_settings_for_dialog_display mock
         settings_file = tmp_path / "app_settings.json"
         
         # Case 1: File exists with the setting
@@ -231,22 +239,25 @@ class TestSettingsDialog:
             json.dump({"image_preview_mode": PREVIEW_MODE_ORIGINAL_ZOOM, "other_value": "test"}, f)
         
         mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(settings_file))
-        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION)
+        # FIX: Add current_wc_comment_format argument
+        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION, WC_FORMAT_HASH_COMMENT)
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_ORIGINAL_ZOOM
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM # Check if initial_preview_mode is also set
 
         # Case 2: File exists but setting is missing (should default)
         with open(settings_file, 'w') as f:
             json.dump({"other_value": "test"}, f)
-        dialog_instance_2 = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION)
+        # FIX: Add current_wc_comment_format argument
+        dialog_instance_2 = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION, WC_FORMAT_HASH_COMMENT)
         assert dialog_instance_2.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance_2.initial_preview_mode == PREVIEW_MODE_FIT
 
 
-    def test_load_preview_mode_setting_file_not_exists(self, qt_app, tmp_path, mocker):
+    def test_load_settings_for_dialog_display_file_not_exists(self, qt_app, tmp_path, mocker):
         non_existent_file = tmp_path / "non_existent_settings.json"
         mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(non_existent_file))
         
-        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION)
+        # FIX: Add current_wc_comment_format argument
+        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION, WC_FORMAT_HASH_COMMENT)
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_FIT

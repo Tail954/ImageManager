@@ -357,6 +357,10 @@ class MainWindow(QMainWindow):
                 new_item.setData(data_dict["file_path"], Qt.ItemDataRole.UserRole)
                 new_item.setData(data_dict["metadata"], METADATA_ROLE)
                 new_item.setEditable(False)
+                # --- ツールチップの再設定 ---
+                if data_dict["file_path"]:
+                    directory_path = os.path.dirname(data_dict["file_path"])
+                    new_item.setToolTip(f"場所: {directory_path}")
                 self.source_thumbnail_model.appendRow(new_item)
             self.source_thumbnail_model.endResetModel()
             logger.info(f"Sort performed and model updated. Items: {self.source_thumbnail_model.rowCount()}")
@@ -541,9 +545,9 @@ class MainWindow(QMainWindow):
             self.folder_tree_view.setCurrentIndex(selected_folder_index)
             self.folder_tree_view.scrollTo(selected_folder_index, QTreeView.ScrollHint.PositionAtCenter)
         logger.info(f"フォルダツリーを更新しました。表示ルート: {root_display_path}, 選択中: {folder_path}")
-        self.load_thumbnails_from_folder(folder_path)
-        if os.path.isdir(folder_path):
-            self._try_delete_empty_subfolders(folder_path)
+        self.load_thumbnails_from_folder(folder_path) # サムネイル読み込みは維持
+        # if os.path.isdir(folder_path): # ★★★ この自動的な空フォルダ削除呼び出しを削除 ★★★
+            # self._try_delete_empty_subfolders(folder_path)
 
     def on_folder_tree_clicked(self, index):
         path = self.file_system_model.filePath(index)
@@ -551,8 +555,8 @@ class MainWindow(QMainWindow):
             logger.info(f"フォルダがクリックされました: {path}")
             self.current_folder_path = path
             self.load_thumbnails_from_folder(path)
-            if os.path.isdir(path):
-                self._try_delete_empty_subfolders(path)
+            # if os.path.isdir(path): # ★★★ この自動的な空フォルダ削除呼び出しを削除 ★★★
+                # self._try_delete_empty_subfolders(path)
         else:
             logger.debug(f"ファイルがクリックされました: {path}")
 
