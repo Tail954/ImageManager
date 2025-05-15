@@ -69,14 +69,14 @@ class FileOperationManager:
     def _handle_copy_mode_toggled(self, checked):
         self.main_window.is_copy_mode = checked
         if checked:
-            self.main_window.copy_mode_button.setText("Copy Mode Exit")
+            self.main_window.copy_mode_button.setText("Copy Mode: ON")
             self.main_window.move_files_button.setEnabled(False)
             self.main_window.copy_files_button.setEnabled(True)
             self.main_window.deselect_all_thumbnails()
             self.main_window.copy_selection_order.clear()
             logger.info("Copy Mode Enabled.")
         else:
-            self.main_window.copy_mode_button.setText("Copy Mode")
+            self.main_window.copy_mode_button.setText("Copy Mode: OFF")
             self.main_window.move_files_button.setEnabled(True)
             self.main_window.copy_files_button.setEnabled(False)
             self.main_window.deselect_all_thumbnails()

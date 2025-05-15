@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
         self.move_files_button.clicked.connect(self.file_operation_manager._handle_move_files_button_clicked)
         file_op_layout.addWidget(self.move_files_button)
 
-        self.copy_mode_button = QPushButton("Copy Mode")
+        self.copy_mode_button = QPushButton("Copy Mode: OFF")
         self.copy_mode_button.setCheckable(True)
         self.copy_mode_button.toggled.connect(self.file_operation_manager._handle_copy_mode_toggled)
         file_op_layout.addWidget(self.copy_mode_button)
