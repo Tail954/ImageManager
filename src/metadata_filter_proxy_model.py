@@ -14,6 +14,7 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         self._negative_prompt_filter = ""
         self._generation_info_filter = ""
         self._search_mode = "AND"  # Default search mode
+        self._hidden_paths = set() # Set of file paths to hide
         # Disable dynamic filtering to rely on explicit calls to sort() and invalidateFilter().
         # self.setDynamicSortFilter(False) 
         # Filter on all columns by default, though we use custom data roles
@@ -94,6 +95,12 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         else:
             logger.warning(f"Invalid search mode: {mode}. Keeping {self._search_mode}.")
 
+    def set_hidden_paths(self, paths):
+        """Sets the set of file paths that should be hidden by the filter."""
+        # Ensure we are working with a set for efficient lookups
+        self._hidden_paths = set(paths) if paths is not None else set()
+        # invalidateFilter() will be called by the caller (MainWindow) after setting paths
+
     def set_positive_prompt_filter(self, text):
         self._positive_prompt_filter = text.lower()
         self.invalidateFilter() # Re-apply the filter
@@ -123,16 +130,31 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         """
         Determines if a row from the source model should be included in the proxy model.
         """
-        logger.debug(f"filterAcceptsRow called for source_row: {source_row}")
+        # --- Check if the item's file path is in the hidden list ---
+        # This check should happen first, before any metadata filtering.
+        source_index_for_path = self.sourceModel().index(source_row, 0, source_parent)
+        file_path = self.sourceModel().data(source_index_for_path, Qt.ItemDataRole.UserRole)
+        
+        if file_path and file_path in self._hidden_paths:
+            logger.debug(f"filterAcceptsRow: Hiding row {source_row} because path '{file_path}' is in hidden list.")
+            return False # Hide this row
+        # --- End hidden path check ---
+
+        # ソート問題用
+        # logger.info(f"filterAcceptsRow: START - source_row={source_row}, filters(P='{self._positive_prompt_filter}', N='{self._negative_prompt_filter}', G='{self._generation_info_filter}'), mode='{self._search_mode}'")
         if not self.sourceModel():
-            logger.debug("filterAcceptsRow: No source model. Returning False.")
+            # ソート問題用
+            # logger.info(f"filterAcceptsRow: END - No source model. Returning False for row {source_row}.")
             return False
 
         source_index = self.sourceModel().index(source_row, 0, source_parent)
         if not source_index.isValid():
+            # ソート問題用
+            # logger.info(f"filterAcceptsRow: END - Invalid source_index for row {source_row}. Returning False.")
             return False
 
         metadata = self.sourceModel().data(source_index, METADATA_ROLE)
+        logger.debug(f"  filterAcceptsRow: Metadata for row {source_row}: {str(metadata)[:200]}") # Log first 200 chars of metadata
         
         if not isinstance(metadata, dict):
             # If no metadata, only pass if all filter fields are empty
@@ -140,6 +162,7 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
                      not self._negative_prompt_filter and \
                      not self._generation_info_filter
             logger.debug(f"filterAcceptsRow (no metadata): Filters empty? P: {not self._positive_prompt_filter}, N: {not self._negative_prompt_filter}, G: {not self._generation_info_filter}. Result: {result}")
+            logger.debug(f"filterAcceptsRow: END - No metadata for row {source_row}. Returning {result}.")
             return result
 
         # --- Prepare keywords for each filter field ---
@@ -147,6 +170,7 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         positive_keywords = [kw.strip() for kw in self._positive_prompt_filter.split(',') if kw.strip()]
         negative_keywords = [kw.strip() for kw in self._negative_prompt_filter.split(',') if kw.strip()]
         generation_keywords = [kw.strip() for kw in self._generation_info_filter.split(',') if kw.strip()]
+        logger.debug(f"  filterAcceptsRow: Keywords for row {source_row} - P: {positive_keywords}, N: {negative_keywords}, G: {generation_keywords}")
 
         # --- Apply filters for each field ---
         # Each field must satisfy its own keyword search (AND/OR based on self._search_mode)
@@ -159,12 +183,17 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         positive_match_field = self._keywords_match(metadata.get('positive_prompt', ''), positive_keywords)
         negative_match_field = self._keywords_match(metadata.get('negative_prompt', ''), negative_keywords)
         generation_match_field = self._keywords_match(metadata.get('generation_info', ''), generation_keywords)
+        logger.debug(f"  filterAcceptsRow: Field matches for row {source_row} - P_match: {positive_match_field}, N_match: {negative_match_field}, G_match: {generation_match_field}")
 
         if self._search_mode == "AND":
             # For AND mode, all active filters must be true.
             # If a filter text is empty, its corresponding _match_field will be True from _keywords_match,
             # so it doesn't prevent a match if other fields match.
-            return positive_match_field and negative_match_field and generation_match_field
+            final_and_result = positive_match_field and negative_match_field and generation_match_field
+            # ソート問題用
+            # logger.info(f"  filterAcceptsRow (AND mode): Final result for row {source_row}: {final_and_result}")
+            # logger.info(f"filterAcceptsRow: END - AND mode for row {source_row}. Returning {final_and_result}.")
+            return final_and_result
         
         elif self._search_mode == "OR":
             # For OR mode, at least one active filter must be true.
@@ -173,9 +202,12 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
             
             # If all filter texts are empty, all _match_field will be True, so it returns True.
             if not positive_keywords and not negative_keywords and not generation_keywords:
+                # ソート問題用
+                #logger.info(f"  filterAcceptsRow (OR mode): No active keywords for row {source_row}. Returning True.")
+                #logger.info(f"filterAcceptsRow: END - OR mode (no active keywords) for row {source_row}. Returning True.")
                 return True
 
-            # At least one filter text is active. Accept if any active field matches.
+            # At least one filter text is active. Accept if any *active* field matches.
             accepted_by_or = False
             if positive_keywords and positive_match_field:
                 accepted_by_or = True
@@ -183,6 +215,8 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
                 accepted_by_or = True
             if generation_keywords and generation_match_field:
                 accepted_by_or = True
+            # ソート問題用
+            # logger.info(f"  filterAcceptsRow (OR mode): Initial accepted_by_or for row {source_row}: {accepted_by_or} (based on active fields matching)")
             
             # If no filter texts were active (e.g. all were empty strings but not None),
             # the above logic might not set accepted_by_or.
@@ -203,15 +237,24 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
                 active_filter_results.append(negative_match_field)
             if generation_keywords:
                 active_filter_results.append(generation_match_field)
+            # ソート問題用
+            # logger.info(f"  filterAcceptsRow (OR mode): Active filter results list for row {source_row}: {active_filter_results}")
             
             if not active_filter_results: # No active filters (all filter texts were empty)
+                # This case should have been caught by the "if not positive_keywords and not negative_keywords..." check above.
+                # However, keeping it as a safeguard or for clarity.
+                # ソート問題用
+                # logger.info(f"  filterAcceptsRow (OR mode): No active_filter_results (should be redundant check) for row {source_row}. Returning True.")
+                # logger.info(f"filterAcceptsRow: END - OR mode (no active_filter_results) for row {source_row}. Returning True.")
                 return True # All items pass
             
             final_or_result = any(active_filter_results)
-            logger.debug(f"filterAcceptsRow (OR mode): Active filter results: {active_filter_results}. Final OR result: {final_or_result}")
+            # ソート問題用
+            # logger.info(f"  filterAcceptsRow (OR mode): Final OR result for row {source_row} from 'any(active_filter_results)': {final_or_result}")
+            # logger.info(f"filterAcceptsRow: END - OR mode for row {source_row}. Returning {final_or_result}.")
             return final_or_result
 
-        logger.debug("filterAcceptsRow: Unknown search mode. Returning False.")
+        logger.warning(f"filterAcceptsRow: END - Unknown search mode '{self._search_mode}' for row {source_row}. Returning False.")
         return False # Should not be reached if mode is AND/OR
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> QVariant:

@@ -5,10 +5,10 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, QDialog,
-    QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox
+     QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox, QStyledItemDelegate
 )
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator # <--- ★QDirIterator をインポート
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection # <--- ★QDirIterator, QModelIndex, QItemSelection をインポート
 import os # For path operations
 from pathlib import Path # For path operations
 import json # For settings / metadata parsing
@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         self.selected_file_paths = [] # List to store paths of selected thumbnails
         self.is_copy_mode = False # Flag for copy mode state, True if copy mode is active
         self.copy_selection_order = [] # Stores QStandardItem references in copy mode selection order        
+        self._hidden_moved_file_paths = set() # Set to store paths of files moved out of the current view
         # self.progress_dialog = None # Moved to FileOperationManager
         self.progress_dialog = None # For cancellation dialog
         self.initial_dialog_path = None # For storing path from settings
@@ -526,6 +527,9 @@ class MainWindow(QMainWindow):
         folder_path = QFileDialog.getExistingDirectory(self, "画像フォルダを選択", start_dir)
         if folder_path:
             logger.info(f"選択されたフォルダ: {folder_path}")
+            # ★★★ 空フォルダ削除処理をここに移動 ★★★
+            if os.path.isdir(folder_path):
+                self._try_delete_empty_subfolders(folder_path)
             self.update_folder_tree(folder_path)
 
     def update_folder_tree(self, folder_path):
@@ -545,18 +549,17 @@ class MainWindow(QMainWindow):
             self.folder_tree_view.setCurrentIndex(selected_folder_index)
             self.folder_tree_view.scrollTo(selected_folder_index, QTreeView.ScrollHint.PositionAtCenter)
         logger.info(f"フォルダツリーを更新しました。表示ルート: {root_display_path}, 選択中: {folder_path}")
-        self.load_thumbnails_from_folder(folder_path) # サムネイル読み込みは維持
-        # if os.path.isdir(folder_path): # ★★★ この自動的な空フォルダ削除呼び出しを削除 ★★★
-            # self._try_delete_empty_subfolders(folder_path)
+        self.load_thumbnails_from_folder(folder_path)
 
     def on_folder_tree_clicked(self, index):
         path = self.file_system_model.filePath(index)
         if self.file_system_model.isDir(index):
             logger.info(f"フォルダがクリックされました: {path}")
             self.current_folder_path = path
+            # ★★★ 空フォルダ削除処理をここに移動 ★★★
+            if os.path.isdir(path):
+                self._try_delete_empty_subfolders(path)
             self.load_thumbnails_from_folder(path)
-            # if os.path.isdir(path): # ★★★ この自動的な空フォルダ削除呼び出しを削除 ★★★
-                # self._try_delete_empty_subfolders(path)
         else:
             logger.debug(f"ファイルがクリックされました: {path}")
 
@@ -617,6 +620,9 @@ class MainWindow(QMainWindow):
             QApplication.processEvents() # 保留中のイベントを処理
 
             self.source_thumbnail_model.clear()
+            # 新しいフォルダを読み込む際に、非表示リストをクリアしProxyModelに通知
+            self._hidden_moved_file_paths.clear() # MainWindow's list of paths to hide
+            self.filter_proxy_model.set_hidden_paths(self._hidden_moved_file_paths) # Update proxy model's hidden paths
             logger.debug("source_thumbnail_model をクリアしました。")
             self.selected_file_paths.clear()
             self.metadata_cache.clear() # メタデータキャッシュもクリア
@@ -923,12 +929,38 @@ class MainWindow(QMainWindow):
                      else:
                          logger.warning(f"Moved path {path_to_remove} not found in source model's path_to_item_map for removal.")
                  items_to_remove_from_model.sort(key=lambda x: x.row() if x and x.model() == self.source_thumbnail_model else -1, reverse=True)
+
+                 # --- 選択変更シグナルを一時的にブロック ---
+                 try:
+                     self.thumbnail_view.selectionModel().selectionChanged.disconnect(self.handle_thumbnail_selection_changed)
+                     logger.debug("selectionChanged signal disconnected.")
+                 except TypeError:
+                     logger.warning("selectionChanged signal was not connected, cannot disconnect.")
+                 # --- シグナルブロック終わり ---
+
+                 # 削除対象の行番号リストを作成 (降順になっているはず)
+                 rows_to_delete_indices = []
                  for item_to_remove_instance in items_to_remove_from_model:
                      if item_to_remove_instance and item_to_remove_instance.model() == self.source_thumbnail_model:
-                         self.source_thumbnail_model.removeRow(item_to_remove_instance.row())
+                         rows_to_delete_indices.append(item_to_remove_instance.row())
                      elif item_to_remove_instance:
                          logger.warning(f"Item for path {item_to_remove_instance.data(Qt.ItemDataRole.UserRole)} is no longer in the expected model or is invalid, skipping removal.")
+                 if rows_to_delete_indices:
+                     for row_num in rows_to_delete_indices:
+                         # QModelIndex() は親がないトップレベルアイテムを示す
+                         self.source_thumbnail_model.beginRemoveRows(QModelIndex(), row_num, row_num)
+                         removed = self.source_thumbnail_model.removeRow(row_num)
+                         self.source_thumbnail_model.endRemoveRows()
+                         if not removed:
+                             logger.warning(f"Failed to remove row {row_num} from source model.")                         
+              
+                 # --- 選択変更シグナルを再接続し、手動でハンドラを呼び出す ---
+                 self.thumbnail_view.selectionModel().selectionChanged.connect(self.handle_thumbnail_selection_changed)
+                 logger.debug("selectionChanged signal reconnected.")
+                 # モデル変更後に選択状態が自動的に更新されるが、ハンドラは呼ばれない可能性があるため手動で呼ぶ
+                 self.handle_thumbnail_selection_changed(QItemSelection(), QItemSelection()) # 空の選択変更としてハンドラをトリガー
                  self.selected_file_paths.clear()
+                 # _update_status_bar_info() は handle_thumbnail_selection_changed 内で呼ばれる
                  self._update_status_bar_info()
             if renamed_files:
                 dialog = RenamedFilesDialog(renamed_files, self)
@@ -960,27 +992,7 @@ class MainWindow(QMainWindow):
                         if proxy_idx.isValid():
                             self.thumbnail_view.update(proxy_idx)
                 self.copy_selection_order.clear()
-            if operation_type == "move" and status == 'completed' and not errors:
-                source_folders_to_check = set()
-                logger.debug(f"File move completed. successfully_moved_src_paths: {successfully_moved_src_paths}")
-                if successfully_moved_src_paths: # This is already defined above
-                    for src_path in successfully_moved_src_paths:
-                        parent_dir = os.path.dirname(src_path)
-                        logger.debug(f"Checking parent_dir for empty folder check: {parent_dir}, isdir: {os.path.isdir(parent_dir)}")
-                        if os.path.isdir(parent_dir):
-                             source_folders_to_check.add(parent_dir)
-                logger.debug(f"Checking current_folder_path for empty folder check: {self.current_folder_path}, isdir: {os.path.isdir(self.current_folder_path) if self.current_folder_path else 'N/A'}")
-                if self.current_folder_path and os.path.isdir(self.current_folder_path):
-                     source_folders_to_check.add(self.current_folder_path)
-                
-                logger.debug(f"Folders to check for empty subfolders: {source_folders_to_check}")
-                for folder_to_check in source_folders_to_check:
-                    logger.debug(f"Processing folder_to_check: {folder_to_check}, isdir: {os.path.isdir(folder_to_check)}")
-                    if os.path.isdir(folder_to_check):
-                        logger.info(f"ファイル移動完了後、移動元フォルダ '{folder_to_check}' の空サブフォルダ削除を試みます。")
-                        self._try_delete_empty_subfolders(folder_to_check)
-                    else:
-                        logger.debug(f"空フォルダチェックをスキップ: '{folder_to_check}' は存在しないかDirではありません。")
+            # ★★★ ファイル移動完了後の自動的な空フォルダ削除処理を削除 ★★★
 
 
     def _try_delete_empty_subfolders(self, target_folder_path):
