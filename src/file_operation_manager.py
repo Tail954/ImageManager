@@ -125,6 +125,11 @@ class FileOperationManager:
     def _handle_file_op_finished(self, result):
         logger.info(f"File operation finished. Result: {result}")
         if self.progress_dialog:
+            try:
+                # プログレスダイアログを閉じる前に、canceledシグナルを切断
+                self.progress_dialog.canceled.disconnect(self.main_window.file_operations.stop_operation)
+            except TypeError:
+                logger.debug("Progress dialog canceled signal was not connected or already disconnected.")
             self.progress_dialog.close()
             self.progress_dialog = None
         self._set_file_op_buttons_enabled(True)
