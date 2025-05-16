@@ -540,6 +540,43 @@ class MainWindow(QMainWindow):
         image_files = []
         try:
             # 既存のサムネイルローダースレッドを安全に停止する
+            # (この処理は既存のまま)
+            if self.thumbnail_loader_thread and self.thumbnail_loader_thread.isRunning():
+                logger.info("既存のサムネイル読み込みスレッドを停止します...")
+                try:
+                    self.thumbnail_loader_thread.thumbnailLoaded.disconnect(self.update_thumbnail_item)
+                    self.thumbnail_loader_thread.progressUpdated.disconnect(self.update_progress_bar)
+                    self.thumbnail_loader_thread.finished.disconnect(self.on_thumbnail_loading_finished)
+                    logger.debug("既存スレッドのシグナル接続を解除しました。")
+                except TypeError: 
+                    logger.debug("既存スレッドのシグナル接続解除中にエラー発生、または既に解除済み。")
+                except Exception as e:
+                    logger.error(f"既存スレッドのシグナル接続解除中に予期せぬエラー: {e}", exc_info=True)
+
+                self.thumbnail_loader_thread.stop() 
+                if not self.thumbnail_loader_thread.wait(7000): 
+                    logger.warning("既存スレッドの終了待機がタイムアウトしました。")
+                else:
+                    logger.info("既存スレッドが正常に終了しました。")
+                self.thumbnail_loader_thread.deleteLater() 
+                self.thumbnail_loader_thread = None 
+
+            # ★★★ 新しいフォルダを読み込む前に、コピーモードの選択状態をクリア ★★★
+            if self.is_copy_mode:
+                logger.info("フォルダ変更のため、コピーモードの選択情報をクリアします。")
+                selection_model = self.thumbnail_view.selectionModel()
+                if selection_model: # シグナルを一時的に切断
+                    try: selection_model.selectionChanged.disconnect(self.handle_thumbnail_selection_changed)
+                    except TypeError: pass # 接続されていなかった場合
+                for item_in_order in list(self.copy_selection_order): # リストのコピーをイテレート
+                    if item_in_order.model() == self.source_thumbnail_model: # アイテムが現在のモデルに属しているか確認
+                        item_in_order.setData(None, SELECTION_ORDER_ROLE)
+                self.copy_selection_order.clear()
+                if selection_model: # シグナルを再接続
+                    selection_model.selectionChanged.connect(self.handle_thumbnail_selection_changed)
+                self.deselect_all_thumbnails() # ビューの選択もクリア
+            # ★★★ コピーモードクリア処理ここまで ★★★
+
             if self.thumbnail_loader_thread and self.thumbnail_loader_thread.isRunning():
                 logger.info("既存のサムネイル読み込みスレッドを停止します...")
                 # シグナル接続を解除
