@@ -80,8 +80,15 @@ class MainWindow(QMainWindow):
         self.metadata_dialog_last_geometry = None # DialogManagerがMainWindowのこの属性を参照・更新する
         # self.full_image_dialog_instance = None # DialogManagerが管理する
         self.image_preview_mode = PREVIEW_MODE_FIT # Default, will be overwritten by _load_app_settings
-        self.current_sort_key_index = 0 # 0: Filename, 1: Update Date
-        self.current_sort_order = Qt.SortOrder.AscendingOrder # Qt.SortOrder.AscendingOrder or Qt.SortOrder.DescendingOrder
+        # self.current_sort_key_index = 0 # 0: Filename, 1: Update Date # 廃止
+        # self.current_sort_order = Qt.SortOrder.AscendingOrder # Qt.SortOrder.AscendingOrder or Qt.SortOrder.DescendingOrder # 廃止
+        self.sort_criteria_map = { # トグルボタンIDとソートロジックのマッピング
+            0: {"name": "ファイル名 昇順", "key_type": 0, "order": Qt.SortOrder.AscendingOrder, "caption": "ファイル名 昇順"},
+            1: {"name": "ファイル名 降順", "key_type": 0, "order": Qt.SortOrder.DescendingOrder, "caption": "ファイル名 降順"},
+            2: {"name": "更新日時 昇順", "key_type": 1, "order": Qt.SortOrder.AscendingOrder, "caption": "更新日時 昇順"},
+            3: {"name": "更新日時 降順", "key_type": 1, "order": Qt.SortOrder.DescendingOrder, "caption": "更新日時 降順"},
+        }
+        self.current_sort_button_id = 0 # デフォルトは "ファイル名 ↑" (ID: 0)
         self.load_start_time = None # For load time measurement
         self.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA # Default value
         self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
@@ -140,23 +147,41 @@ class MainWindow(QMainWindow):
         sort_options_layout = QVBoxLayout(sort_options_group_box)
         sort_options_layout.setContentsMargins(5,5,5,5)
 
-        sort_controls_layout = QHBoxLayout()
-        sort_controls_layout.addWidget(QLabel("ソート:"))
+        sort_options_layout.addWidget(QLabel("ソート:")) # ★★★ 「ソート:」見出しを追加 ★★★
 
-        self.sort_key_combo = QComboBox()
-        self.sort_key_combo.addItems(["ファイル名", "更新日時"])
-        self.sort_key_combo.currentIndexChanged.connect(self._apply_sort_and_filter_update)
-        sort_controls_layout.addWidget(self.sort_key_combo)
+        # --- New Toggle Button Sort UI ---
+        self.sort_button_group = QButtonGroup(self)
+        self.sort_button_group.setExclusive(True)
 
-        self.sort_order_button = QPushButton()
-        if self.current_sort_order == Qt.SortOrder.AscendingOrder: # Set initial text based on default
-            self.sort_order_button.setText("昇順 ▲")
-        else:
-            self.sort_order_button.setText("降順 ▼")
-        self.sort_order_button.clicked.connect(self._toggle_sort_order_and_apply)
-        sort_controls_layout.addWidget(self.sort_order_button)
+        sort_buttons_layout_row1 = QHBoxLayout()
+        self.sort_filename_asc_button = QPushButton(self.sort_criteria_map[0]["caption"])
+        self.sort_filename_asc_button.setCheckable(True)
+        self.sort_button_group.addButton(self.sort_filename_asc_button, 0)
+        sort_buttons_layout_row1.addWidget(self.sort_filename_asc_button)
 
-        sort_options_layout.addLayout(sort_controls_layout)
+        self.sort_filename_desc_button = QPushButton(self.sort_criteria_map[1]["caption"])
+        self.sort_filename_desc_button.setCheckable(True)
+        self.sort_button_group.addButton(self.sort_filename_desc_button, 1)
+        sort_buttons_layout_row1.addWidget(self.sort_filename_desc_button)
+        sort_options_layout.addLayout(sort_buttons_layout_row1)
+
+        sort_buttons_layout_row2 = QHBoxLayout()
+        self.sort_date_asc_button = QPushButton(self.sort_criteria_map[2]["caption"])
+        self.sort_date_asc_button.setCheckable(True)
+        self.sort_button_group.addButton(self.sort_date_asc_button, 2)
+        sort_buttons_layout_row2.addWidget(self.sort_date_asc_button)
+
+        self.sort_date_desc_button = QPushButton(self.sort_criteria_map[3]["caption"])
+        self.sort_date_desc_button.setCheckable(True)
+        self.sort_button_group.addButton(self.sort_date_desc_button, 3)
+        sort_buttons_layout_row2.addWidget(self.sort_date_desc_button)
+        sort_options_layout.addLayout(sort_buttons_layout_row2)
+
+        # self.sort_button_group.buttonClicked[int].connect(self._apply_sort_from_toggle_button) # KeyErrorの原因
+        # int型のIDを受け取るシグナルに接続
+        self.sort_button_group.idClicked.connect(self._apply_sort_from_toggle_button)
+        # --- End New Toggle Button Sort UI ---
+
         left_layout.addWidget(sort_options_group_box)
         # --- End Sort Options UI ---
 
@@ -289,7 +314,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter)
 
         # self._load_settings() # Load UI specific settings after all UI elements are initialized <=self._load_app_settings()に統合
-        self._apply_sort_and_filter_update() # Apply initial sort based on loaded or default settings
+        self._apply_initial_sort_from_settings() # Apply initial sort based on loaded or default settings
         self._update_status_bar_info() # Initial status bar update
 
 
@@ -304,93 +329,39 @@ class MainWindow(QMainWindow):
             selected_items = len(self.thumbnail_view.selectionModel().selectedIndexes())
         self.statusBar.showMessage(f"表示アイテム数: {total_items} / 選択アイテム数: {selected_items}")
 
-    def _perform_sort(self):
-        if not self.source_thumbnail_model:
-            logger.warning("_perform_sort called but source_thumbnail_model is None.")
+    def _apply_initial_sort_from_settings(self):
+        """アプリケーション起動時に設定からソートを適用する"""
+        button_to_check = self.sort_button_group.button(self.current_sort_button_id)
+        if button_to_check:
+            button_to_check.setChecked(True) # これにより _apply_sort_from_toggle_button がトリガーされる
+        else: # フォールバック
+            logger.warning(f"初期ソートボタンID {self.current_sort_button_id} が無効です。デフォルトのファイル名昇順を適用します。")
+            self.current_sort_button_id = 0 # ID 0 (ファイル名 ↑) にリセット
+            if default_button := self.sort_button_group.button(0):
+                default_button.setChecked(True)
+
+    def _apply_sort_from_toggle_button(self, button_id: int):
+        """トグルボタンのクリックに基づいてソートを実行する"""
+        if not self.filter_proxy_model or not self.source_thumbnail_model:
+            logger.warning("_apply_sort_from_toggle_button: Models not ready.")
             return
-        num_items = self.source_thumbnail_model.rowCount()
-        if num_items == 0:
-            logger.debug("_perform_sort: No items in model to sort.")
-            return
-        logger.info(f"Performing sort. Key: {self.current_sort_key_index}, Order: {self.current_sort_order}. Items: {num_items}")
-        self.sort_key_combo.setEnabled(False)
-        self.sort_order_button.setEnabled(False)
-        QApplication.processEvents() # Ensure UI updates
-        sort_start_time = time.time()
-        try:
-            item_data_list = []
-            for i in range(num_items):
-                item = self.source_thumbnail_model.item(i)
-                if item:
-                    file_path = item.data(Qt.ItemDataRole.UserRole)
-                    icon = item.icon()
-                    text = item.text()
-                    metadata = item.data(METADATA_ROLE)
-                    item_data_list.append({
-                        "file_path": file_path,
-                        "icon": icon,
-                        "text": text,
-                        "metadata": metadata,
-                    })
-            def sort_key_func(data_dict):
-                file_path = data_dict["file_path"]
-                if file_path is None:
-                    return "" if self.current_sort_key_index == 0 else 0
-                if self.current_sort_key_index == 0:  # Filename
-                    return os.path.basename(file_path).lower()
-                elif self.current_sort_key_index == 1:  # Update Date
-                    try:
-                        return os.path.getmtime(file_path)
-                    except FileNotFoundError:
-                        logger.warning(f"File not found for mtime (fallback): {file_path}, using 0 for sort.")
-                        return 0.0
-                    except Exception as e:
-                        logger.error(f"Error getting mtime for {file_path} (fallback): {e}. Using 0 for sort.")
-                        return 0.0
-                return ""
-            item_data_list.sort(key=sort_key_func, reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder))
-            self.source_thumbnail_model.beginResetModel()
-            self.source_thumbnail_model.clear()
-            for data_dict in item_data_list:
-                new_item = QStandardItem()
-                new_item.setIcon(data_dict["icon"])
-                new_item.setText(data_dict["text"])
-                new_item.setData(data_dict["file_path"], Qt.ItemDataRole.UserRole)
-                new_item.setData(data_dict["metadata"], METADATA_ROLE)
-                new_item.setEditable(False)
-                # --- ツールチップの再設定 ---
-                if data_dict["file_path"]:
-                    directory_path = os.path.dirname(data_dict["file_path"])
-                    new_item.setToolTip(f"場所: {directory_path}")
-                self.source_thumbnail_model.appendRow(new_item)
-            self.source_thumbnail_model.endResetModel()
-            logger.info(f"Sort performed and model updated. Items: {self.source_thumbnail_model.rowCount()}")
-        except Exception as e:
-            logger.error(f"Error during sort operation: {e}", exc_info=True)
-        finally:
-            self.sort_key_combo.setEnabled(True)
-            self.sort_order_button.setEnabled(True)
-            sort_end_time = time.time()
-            logger.info(f"Sort operation took: {sort_end_time - sort_start_time:.4f} seconds.")
+
+        self.current_sort_button_id = button_id # 現在のソート状態を更新
+        selected_criteria = self.sort_criteria_map.get(self.current_sort_button_id)
+
+        if selected_criteria:
+            key_type = selected_criteria["key_type"]
+            sort_order = selected_criteria["order"]
+            
+            logger.info(f"Applying sort. Button ID: {button_id}, Criteria: '{selected_criteria['name']}', Key Type: {key_type}, Order: {sort_order}")
+            
+            self.filter_proxy_model.set_sort_key_type(key_type)
+            # QSortFilterProxyModel.sort() を呼び出すと、lessThan が使用される
+            # 列インデックスは0で固定 (lessThan内で実際のキータイプを見るため)
+            self.filter_proxy_model.sort(0, sort_order)
             self._update_status_bar_info()
-
-    def _toggle_sort_order_and_apply(self):
-        logger.debug(f"Before toggle: self.current_sort_order = {self.current_sort_order}")
-        if self.current_sort_order == Qt.SortOrder.AscendingOrder:
-            self.current_sort_order = Qt.SortOrder.DescendingOrder
-            new_button_text = "降順 ▼"
         else:
-            self.current_sort_order = Qt.SortOrder.AscendingOrder
-            new_button_text = "昇順 ▲"
-        self.sort_order_button.setText(new_button_text)
-        logger.debug(f"After toggle: self.current_sort_order = {self.current_sort_order}, Button text set to: {new_button_text}")
-        self._apply_sort_and_filter_update()
-
-    def _apply_sort_and_filter_update(self):
-        self.current_sort_key_index = self.sort_key_combo.currentIndex()
-        logger.info(f"Applying sort and filter. Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
-        self._perform_sort()
-
+            logger.warning(f"Invalid sort button ID: {self.current_sort_button_id}")
 
     def _create_menu_bar(self):
         """ メニューバーを作成し、アクションを直接配置 """
@@ -427,8 +398,8 @@ class MainWindow(QMainWindow):
         self.app_settings[WC_COMMENT_OUTPUT_FORMAT] = self.wc_creator_comment_format
         self.app_settings["last_folder_path"] = self.current_folder_path
         self.app_settings["recursive_search"] = self.recursive_search_enabled
-        self.app_settings["sort_key_index"] = self.current_sort_key_index
-        self.app_settings["sort_order"] = self.current_sort_order.value
+        # self.app_settings["sort_criteria_index"] = self.current_sort_criteria_index # 廃止 (コンボボックス用)
+        self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
 
         self._write_app_settings_file(self.app_settings)
 
@@ -452,8 +423,8 @@ class MainWindow(QMainWindow):
                 WC_COMMENT_OUTPUT_FORMAT: self.wc_creator_comment_format,
                 "last_folder_path": self.current_folder_path,
                 "recursive_search": self.recursive_search_enabled,
-                "sort_key_index": self.current_sort_key_index,
-                "sort_order": self.current_sort_order.value
+                # "sort_criteria_index": self.current_sort_criteria_index, # 廃止
+                "sort_button_id": self.current_sort_button_id, # 新しいトグルボタンUI用
             }
         try:
             with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
@@ -503,20 +474,15 @@ class MainWindow(QMainWindow):
         logger.info(f"再帰検索設定を読み込みました: {'ON' if self.recursive_search_enabled else 'OFF'}")
 
         # ソート設定
-        self.current_sort_key_index = self.app_settings.get("sort_key_index", 0)
-        if hasattr(self, 'sort_key_combo') and self.sort_key_combo: # UI要素が存在すれば更新
-            if 0 <= self.current_sort_key_index < self.sort_key_combo.count():
-                self.sort_key_combo.setCurrentIndex(self.current_sort_key_index)
+        self.current_sort_button_id = self.app_settings.get("sort_button_id", 0) # デフォルトはID 0 (ファイル名 ↑)
+        if hasattr(self, 'sort_button_group'): # UI要素が存在すれば更新
+            button_to_check = self.sort_button_group.button(self.current_sort_button_id)
+            if button_to_check:
+                pass # _apply_initial_sort_from_settings でチェックされる
             else:
-                logger.warning(f"保存されたソートキーインデックスが無効: {self.current_sort_key_index}。0にリセットします。")
-                self.current_sort_key_index = 0
-                self.sort_key_combo.setCurrentIndex(0)
-
-        self.current_sort_order = Qt.SortOrder(self.app_settings.get("sort_order", Qt.SortOrder.AscendingOrder.value))
-        if hasattr(self, 'sort_order_button') and self.sort_order_button: # UI要素が存在すれば更新
-            self.sort_order_button.setText("降順 ▼" if self.current_sort_order == Qt.SortOrder.DescendingOrder else "昇順 ▲")
-        logger.info(f"ソート設定を読み込みました: Key Index: {self.current_sort_key_index}, Order: {self.current_sort_order}")
-
+                logger.warning(f"保存されたソートボタンIDが無効: {self.current_sort_button_id}。0にリセットします。")
+                self.current_sort_button_id = 0
+        logger.info(f"ソートボタンIDを読み込みました: {self.current_sort_button_id} ('{self.sort_criteria_map.get(self.current_sort_button_id, {}).get('name', 'N/A')}')")
 
     def select_folder(self):
         start_dir = ""
@@ -613,8 +579,10 @@ class MainWindow(QMainWindow):
             self.generation_info_filter_edit.setEnabled(False)
             self.and_radio_button.setEnabled(False)
             self.or_radio_button.setEnabled(False)
-            self.sort_key_combo.setEnabled(False)
-            self.sort_order_button.setEnabled(False)
+            # Disable sort toggle buttons
+            for button_id_loop in range(len(self.sort_criteria_map)): # Renamed button_id to avoid conflict
+                if btn := self.sort_button_group.button(button_id_loop):
+                    btn.setEnabled(False)
 
             # モデルをクリアする前に、本当に古いスレッドがいないことを確認
             QApplication.processEvents() # 保留中のイベントを処理
@@ -661,8 +629,10 @@ class MainWindow(QMainWindow):
             self.positive_prompt_filter_edit.setEnabled(True)
             self.negative_prompt_filter_edit.setEnabled(True)
             self.generation_info_filter_edit.setEnabled(True)
-            self.sort_key_combo.setEnabled(True)
-            self.sort_order_button.setEnabled(True)
+            # Enable sort toggle buttons
+            for button_id_loop in range(len(self.sort_criteria_map)): # Renamed button_id to avoid conflict
+                if btn := self.sort_button_group.button(button_id_loop):
+                    btn.setEnabled(True)
             self.on_thumbnail_loading_finished() # UI状態をリセットするために呼ぶ
 
     def handle_recursive_search_toggled(self, checked):
@@ -703,6 +673,7 @@ class MainWindow(QMainWindow):
             if item is None or item.model() is None: # model() が None ならアイテムはモデルから削除されている可能性が高い
                 logger.warning("update_thumbnail_item received an invalid or deleted item. Skipping update.")
                 return
+            # logger.debug(f"update_thumbnail_item: Received metadata for item '{item.text()}': {metadata}")
 
             file_path = item.data(Qt.ItemDataRole.UserRole) # この行でエラーが発生していた可能性
 
@@ -722,6 +693,7 @@ class MainWindow(QMainWindow):
                 logger.warning(f"update_thumbnail_item for {file_path}: pixmap is None. Icon not set.")
 
             self.metadata_cache[file_path] = metadata
+            # logger.debug(f"update_thumbnail_item: Setting METADATA_ROLE for '{file_path}' with: {metadata}")
             item.setData(metadata, METADATA_ROLE) # ここでも item が無効ならエラーの可能性
             
             directory_path = os.path.dirname(file_path)
@@ -747,8 +719,10 @@ class MainWindow(QMainWindow):
         self.generation_info_filter_edit.setEnabled(True)
         self.and_radio_button.setEnabled(True)
         self.or_radio_button.setEnabled(True)
-        self.sort_key_combo.setEnabled(True)
-        self.sort_order_button.setEnabled(True)
+        # Enable sort toggle buttons
+        for button_id_loop in range(len(self.sort_criteria_map)): # Renamed button_id to avoid conflict
+            if btn := self.sort_button_group.button(button_id_loop):
+                btn.setEnabled(True)
         if self.filter_proxy_model:
             self.apply_filters(preserve_selection=True)
         self._update_status_bar_info()
@@ -834,17 +808,23 @@ class MainWindow(QMainWindow):
         self._update_status_bar_info()
 
     def apply_filters(self, preserve_selection=False):
+        # logger.debug(f"apply_filters called. Preserve selection: {preserve_selection}")
         if not preserve_selection:
             self.deselect_all_thumbnails()
         if self.filter_proxy_model:
             search_mode = "AND" if self.and_radio_button.isChecked() else "OR"
             self.filter_proxy_model.set_search_mode(search_mode)
-            logger.debug(f"Search mode set to: {search_mode}")
+            # logger.debug(f"Search mode set to: {search_mode}")
             self.filter_proxy_model.set_positive_prompt_filter(self.positive_prompt_filter_edit.text())
+            # logger.debug(f"Positive prompt filter set to: '{self.positive_prompt_filter_edit.text()}'")
             self.filter_proxy_model.set_negative_prompt_filter(self.negative_prompt_filter_edit.text())
+            # logger.debug(f"Negative prompt filter set to: '{self.negative_prompt_filter_edit.text()}'")
             self.filter_proxy_model.set_generation_info_filter(self.generation_info_filter_edit.text())
+            # logger.debug(f"Generation info filter set to: '{self.generation_info_filter_edit.text()}'")
+            # フィルタ条件設定後、明示的にinvalidateを呼び出して再フィルタリングと再ソートを促す
+            self.filter_proxy_model.invalidate()
         else:
-            logger.debug("Filter proxy model not yet initialized for apply_filters call.")
+            logger.warning("Filter proxy model not yet initialized for apply_filters call.") # Warning level might be appropriate
         self._update_status_bar_info()
 
     # --- ★★★ START: DropWindow連携メソッド ★★★ ---
@@ -901,7 +881,7 @@ class MainWindow(QMainWindow):
 
     # --- File Operation Completion Logic (called by FileOperationManager) ---
     def _process_file_op_completion(self, result):
-        logger.info(f"File operation finished. Result: {result}")
+        # logger.info(f"_process_file_op_completion started. Result: {result}") # 詳細すぎるのでコメントアウト
         status = result.get('status', 'unknown')
         operation_type = result.get('operation_type', 'unknown')
         if status == 'cancelled':
@@ -913,7 +893,7 @@ class MainWindow(QMainWindow):
             moved_count = result.get('moved_count', 0)
             renamed_files = result.get('renamed_files', [])
             if moved_count > 0 and successfully_moved_src_paths:
-                 logger.info(f"Successfully moved {moved_count} files. Updating model.")
+                 # logger.info(f"Successfully moved {moved_count} files. Updating model.") # コメントアウト
                  path_to_item_map = {}
                  for row in range(self.source_thumbnail_model.rowCount()):
                      item = self.source_thumbnail_model.item(row)
@@ -921,6 +901,7 @@ class MainWindow(QMainWindow):
                          item_path = item.data(Qt.ItemDataRole.UserRole)
                          if item_path:
                              path_to_item_map[item_path] = item
+                 # logger.debug(f"path_to_item_map created with {len(path_to_item_map)} entries.")
                  items_to_remove_from_model = []
                  for path_to_remove in successfully_moved_src_paths:
                      item_to_remove = path_to_item_map.get(path_to_remove)
@@ -929,11 +910,12 @@ class MainWindow(QMainWindow):
                      else:
                          logger.warning(f"Moved path {path_to_remove} not found in source model's path_to_item_map for removal.")
                  items_to_remove_from_model.sort(key=lambda x: x.row() if x and x.model() == self.source_thumbnail_model else -1, reverse=True)
+                 # logger.debug(f"Found {len(items_to_remove_from_model)} items to remove from model.")
 
                  # --- 選択変更シグナルを一時的にブロック ---
                  try:
                      self.thumbnail_view.selectionModel().selectionChanged.disconnect(self.handle_thumbnail_selection_changed)
-                     logger.debug("selectionChanged signal disconnected.")
+                     # logger.debug("selectionChanged signal disconnected.")
                  except TypeError:
                      logger.warning("selectionChanged signal was not connected, cannot disconnect.")
                  # --- シグナルブロック終わり ---
@@ -945,21 +927,36 @@ class MainWindow(QMainWindow):
                          rows_to_delete_indices.append(item_to_remove_instance.row())
                      elif item_to_remove_instance:
                          logger.warning(f"Item for path {item_to_remove_instance.data(Qt.ItemDataRole.UserRole)} is no longer in the expected model or is invalid, skipping removal.")
+                 
+                 self.thumbnail_view.setUpdatesEnabled(False) # ★ ビューの更新を一時的に無効化
+
                  if rows_to_delete_indices:
+                     # logger.debug(f"Source model rowCount before removal: {self.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.filter_proxy_model.rowCount()}")
                      for row_num in rows_to_delete_indices:
                          # QModelIndex() は親がないトップレベルアイテムを示す
                          self.source_thumbnail_model.beginRemoveRows(QModelIndex(), row_num, row_num)
                          removed = self.source_thumbnail_model.removeRow(row_num)
                          self.source_thumbnail_model.endRemoveRows()
-                         if not removed:
+                         if removed:
+                             pass # logger.debug(f"Successfully removed row {row_num} from source model.")
+                         else:
                              logger.warning(f"Failed to remove row {row_num} from source model.")                         
+                     # logger.debug(f"Source model rowCount after removal: {self.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.filter_proxy_model.rowCount()}")
               
                  # --- 選択変更シグナルを再接続し、手動でハンドラを呼び出す ---
                  self.thumbnail_view.selectionModel().selectionChanged.connect(self.handle_thumbnail_selection_changed)
-                 logger.debug("selectionChanged signal reconnected.")
+                 # logger.debug("selectionChanged signal reconnected.")
                  # モデル変更後に選択状態が自動的に更新されるが、ハンドラは呼ばれない可能性があるため手動で呼ぶ
                  self.handle_thumbnail_selection_changed(QItemSelection(), QItemSelection()) # 空の選択変更としてハンドラをトリガー
                  self.selected_file_paths.clear()
+                 
+                 # ★★★ ファイル移動後、フィルタを再適用してビューを更新 ★★★
+                 # logger.debug("Processing events before applying filters post-move.")
+                 QApplication.processEvents() # UIイベント処理を挟む
+                 # logger.info("Applying filters after move operation to refresh view.") # INFOレベルなので残しても良いが、一時的になくす
+                 self.thumbnail_view.setUpdatesEnabled(True) # ★ ビューの更新を有効化
+                 # apply_filters の前に True に戻すか、後にするかは挙動を見て調整
+                 self.apply_filters(preserve_selection=True) # preserve_selection=True で現在の選択を維持しようと試みる (実際にはクリアされるが)
                  # _update_status_bar_info() は handle_thumbnail_selection_changed 内で呼ばれる
                  self._update_status_bar_info()
             if renamed_files:
@@ -994,6 +991,7 @@ class MainWindow(QMainWindow):
                 self.copy_selection_order.clear()
             # ★★★ ファイル移動完了後の自動的な空フォルダ削除処理を削除 ★★★
 
+        # logger.info("_process_file_op_completion finished.") # 詳細すぎるのでコメントアウト
 
     def _try_delete_empty_subfolders(self, target_folder_path):
         if not target_folder_path or not os.path.isdir(target_folder_path):

@@ -32,19 +32,40 @@ class ThumbnailLoaderThread(QThread):
     def _process_single_image(self, file_path, item):
         """Processes a single image: creates thumbnail and extracts metadata."""
         if not self._is_running:
+            # logger.debug(f"_process_single_image: Stop requested for {file_path}, returning default metadata.")
             # Return default/empty data if stopping
-            return item, None, {'positive_prompt': '', 'negative_prompt': '', 'generation_info': ''}
+            return item, None, {
+                'positive_prompt': '',
+                'negative_prompt': '',
+                'generation_info': '',
+                'filename_for_sort': os.path.basename(file_path).lower() if file_path and isinstance(file_path, str) else '',
+                'update_timestamp': 0.0
+            }
 
         q_image = None
-        metadata_dict = {
-            'positive_prompt': '',
-            'negative_prompt': '',
-            'generation_info': ''
-        }
+        # まずメタデータを抽出
+        # logger.debug(f"_process_single_image: Extracting metadata for {file_path}")
+        metadata_dict = extract_image_metadata(file_path)
+        # logger.debug(f"_process_single_image: Metadata from extract_image_metadata for {file_path}: {metadata_dict}")
+
+        # 抽出された辞書にソート用キーを追加
+        filename_for_sort = os.path.basename(file_path).lower()
+        update_timestamp = 0.0
+        try:
+            update_timestamp = os.path.getmtime(file_path)
+        except FileNotFoundError:
+            logger.warning(f"File not found for mtime in _process_single_image: {file_path}, using 0.0.")
+        except Exception as e:
+            logger.error(f"Error getting mtime for {file_path} in _process_single_image: {e}. Using 0.0.")
+        
+        metadata_dict['filename_for_sort'] = filename_for_sort
+        metadata_dict['update_timestamp'] = update_timestamp
+        # logger.debug(f"_process_single_image: Metadata after adding sort keys for {file_path}: {metadata_dict}")
 
         try:
             img = Image.open(file_path)
             img.thumbnail((self.target_size, self.target_size))
+            # 'filename_for_sort' と 'update_timestamp' は既に上で設定済み
 
             # Revert to original ImageQt conversion logic based on mode for safety/optimality
             if img.mode == "RGBA":
@@ -54,14 +75,17 @@ class ThumbnailLoaderThread(QThread):
             else: # Other modes like P, L, 1, etc.
                 q_image = ImageQt.ImageQt(img.convert("RGBA")) # Convert to RGBA as a general fallback
             
-            metadata_dict = extract_image_metadata(file_path)
+            # metadata_dict = extract_image_metadata(file_path) # ★★★ これは既に上で実行済み ★★★
+            # logger.debug(f"_process_single_image: Successfully processed image and metadata for {file_path}. Final metadata: {metadata_dict}")
             return item, q_image, metadata_dict
 
         except FileNotFoundError:
             logger.error(f"サムネイル生成/メタデータ抽出エラー (ファイルが見つかりません): {file_path}")
+            # metadata_dict には既にソート用キーと抽出試行済みのメタデータが入っている
             return item, None, metadata_dict
         except Exception as e:
             logger.error(f"サムネイル生成/メタデータ抽出エラー ({file_path}): {e}", exc_info=True)
+            # metadata_dict には既にソート用キーと抽出試行済みのメタデータが入っている
             return item, None, metadata_dict
 
     def run(self):
