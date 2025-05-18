@@ -766,7 +766,12 @@ class TestMainWindowCloseEvent(TestMainWindowBase):
 # --- Pytest style tests (can be converted or kept alongside) ---
 @pytest.fixture
 def main_window_fixture(qt_app, tmp_path, monkeypatch):
-    monkeypatch.setattr(MainWindow, "_load_app_settings", lambda self: None)
+    # _load_app_settings が self.app_settings を初期化するようにモック化
+    def mock_load_app_settings(self_mw):
+        self_mw.app_settings = {} # 空の辞書で初期化
+        # 必要であれば、テストケースに応じて特定のキーをapp_settingsに追加することも可能
+    monkeypatch.setattr(MainWindow, "_load_app_settings", mock_load_app_settings)
+
     monkeypatch.setattr(MainWindow, "_save_settings", lambda self: None)
     
     # UIManager とその属性をモック化
