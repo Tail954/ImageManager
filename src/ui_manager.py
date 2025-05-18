@@ -45,6 +45,8 @@ class UIManager:
         self.thumbnail_delegate = None
         self.source_thumbnail_model = None
         self.filter_proxy_model = None
+        self.left_panel_widget_ref = None # 左パネルへの参照を保持
+        self.left_panel_overlay_widget = None # 左パネル専用オーバーレイ
 
     def setup_ui(self):
         # Menu Bar (MainWindow側で _create_menu_bar を呼び出す)
@@ -63,9 +65,16 @@ class UIManager:
         # Splitter for resizable panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left panel
-        left_panel = self._create_left_panel()
-        splitter.addWidget(left_panel)
+        # Left panel (参照を保持)
+        self.left_panel_widget_ref = self._create_left_panel()
+        splitter.addWidget(self.left_panel_widget_ref)
+
+        # 左パネル用オーバーレイウィジェットの作成
+        self.left_panel_overlay_widget = QWidget(self.left_panel_widget_ref) # 親を左パネルに
+        self.left_panel_overlay_widget.setObjectName("leftPanelOverlayWidget")
+        self.left_panel_overlay_widget.setStyleSheet("QWidget#leftPanelOverlayWidget { background-color: rgba(0, 0, 0, 70); }")
+        self.left_panel_overlay_widget.hide() # 初期状態は非表示
+        # サイズと位置は set_ui_locked で調整
 
         # Right panel (Thumbnail view)
         right_panel = self._create_right_panel()
@@ -255,30 +264,39 @@ class UIManager:
         if self.copy_mode_button:
             self.copy_mode_button.setText(f"Copy Mode: {'ON' if checked else 'OFF'}")
 
+    def set_ui_locked(self, locked: bool):
+        """指定された状態に基づいて左パネルUIをロック/アンロックする。"""
+        if self.left_panel_overlay_widget and self.left_panel_widget_ref:
+            if locked:
+                # left_panel_overlay_widget を left_panel_widget_ref のサイズに合わせ、最前面に表示
+                self.left_panel_overlay_widget.setGeometry(self.left_panel_widget_ref.rect())
+                self.left_panel_overlay_widget.raise_()
+                self.left_panel_overlay_widget.show()
+            else:
+                self.left_panel_overlay_widget.hide()
+        logger.debug(f"Left Panel UI Lock state set to: {locked}")
+
     def set_file_op_buttons_enabled_ui(self, enabled):
-        if self.move_files_button: self.move_files_button.setEnabled(enabled and not self.mw.is_copy_mode)
-        if self.copy_files_button: self.copy_files_button.setEnabled(enabled and self.mw.is_copy_mode)
-        if self.copy_mode_button: self.copy_mode_button.setEnabled(enabled)
-        if self.folder_select_button: self.folder_select_button.setEnabled(enabled)
-        if self.folder_tree_view: self.folder_tree_view.setEnabled(enabled)
+        # 左パネル全体をロック/アンロック
+        self.set_ui_locked(not enabled)
+        # ロックが解除されたときに、コピーモードに応じてボタンの状態を再設定
+        if enabled:
+            if self.move_files_button: self.move_files_button.setEnabled(not self.mw.is_copy_mode)
+            if self.copy_files_button: self.copy_files_button.setEnabled(self.mw.is_copy_mode)
+            if self.copy_mode_button: self.copy_mode_button.setEnabled(True)
+            # folder_select_button と folder_tree_view はオーバーレイでカバーされるため、
+            # 個別の有効/無効制御は不要になります。
+            # ただし、オーバーレイが解除されたときに folder_select_button は常に有効であるべきなので、
+            # 必要であればここで self.folder_select_button.setEnabled(True) を追加できます。
+            # folder_tree_view はオーバーレイで制御されるので、ここでは何もしません。
+        else: # ロック時 (enabled = False)
+            # ロック時には、ファイル操作ボタンも無効化されているべきです。
+            # set_ui_locked(True) が呼ばれるので、オーバーレイが表示されます。
+            # 個別のボタン制御は、ロック解除時に復元されるため、ここでは不要です。
+            pass
 
     def set_thumbnail_loading_ui_state(self, loading: bool):
-        enabled = not loading
-        if self.folder_tree_view: self.folder_tree_view.setEnabled(enabled)
-        if self.recursive_toggle_button: self.recursive_toggle_button.setEnabled(enabled)
-        if self.deselect_all_button: self.deselect_all_button.setEnabled(enabled)
-        if self.select_all_button: self.select_all_button.setEnabled(enabled)
-        if self.positive_prompt_filter_edit: self.positive_prompt_filter_edit.setEnabled(enabled)
-        if self.negative_prompt_filter_edit: self.negative_prompt_filter_edit.setEnabled(enabled)
-        if self.generation_info_filter_edit: self.generation_info_filter_edit.setEnabled(enabled)
-        if self.and_radio_button: self.and_radio_button.setEnabled(enabled)
-        if self.or_radio_button: self.or_radio_button.setEnabled(enabled)
-        if self.apply_filter_button: self.apply_filter_button.setEnabled(enabled)
-
-        if self.sort_button_group:
-            for button_id_loop in range(len(self.mw.sort_criteria_map)):
-                if btn := self.sort_button_group.button(button_id_loop):
-                    btn.setEnabled(enabled)
+        self.set_ui_locked(loading)
 
     def update_thumbnail_view_sizes(self):
         if self.thumbnail_view:

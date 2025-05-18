@@ -920,6 +920,16 @@ class MainWindow(QMainWindow):
         logger.info("アプリケーションを終了します。")
         super().closeEvent(event)
 
+    def resizeEvent(self, event: QCloseEvent): # QResizeEvent の方が適切
+        """ウィンドウリサイズ時に左パネルのオーバーレイウィジェットのサイズを調整する。"""
+        super().resizeEvent(event)
+        # 左パネルのオーバーレイウィジェットが有効（表示中）であれば、
+        # 左パネルの現在のサイズに合わせてオーバーレイのサイズも更新する
+        if hasattr(self.ui_manager, 'left_panel_overlay_widget') and \
+           self.ui_manager.left_panel_overlay_widget and self.ui_manager.left_panel_widget_ref and \
+           self.ui_manager.left_panel_overlay_widget.isVisible():
+            self.ui_manager.left_panel_overlay_widget.setGeometry(self.ui_manager.left_panel_widget_ref.rect())
+
     def _show_thumbnail_context_menu(self, pos):
         proxy_index = self.ui_manager.thumbnail_view.indexAt(pos) # ★★★ UIManager経由 ★★★
         if not proxy_index.isValid():
