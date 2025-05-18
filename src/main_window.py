@@ -44,7 +44,8 @@ from .file_operation_manager import FileOperationManager # New import
 from .constants import (
     APP_SETTINGS_FILE,
     METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
-    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
+    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, 
+    DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT
 )
 
@@ -92,6 +93,7 @@ class MainWindow(QMainWindow):
         self.load_start_time = None # For load time measurement
         self.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA # Default value
         self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
+        self.delete_empty_folders_enabled = True # ★★★ 追加: デフォルトは有効 ★★★
 
         self.file_operation_manager = FileOperationManager(self) # New instance
         self.file_operations = FileOperations(parent=self, file_op_manager=self.file_operation_manager) # Pass manager
@@ -399,6 +401,7 @@ class MainWindow(QMainWindow):
         self.app_settings["last_folder_path"] = self.current_folder_path
         self.app_settings["recursive_search"] = self.recursive_search_enabled
         # self.app_settings["sort_criteria_index"] = self.current_sort_criteria_index # 廃止 (コンボボックス用)
+        self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled # ★★★ 追加 ★★★
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
 
         self._write_app_settings_file(self.app_settings)
@@ -422,6 +425,7 @@ class MainWindow(QMainWindow):
                 THUMBNAIL_RIGHT_CLICK_ACTION: self.thumbnail_right_click_action,
                 WC_COMMENT_OUTPUT_FORMAT: self.wc_creator_comment_format,
                 "last_folder_path": self.current_folder_path,
+                DELETE_EMPTY_FOLDERS_ENABLED: self.delete_empty_folders_enabled, # ★★★ 追加 ★★★
                 "recursive_search": self.recursive_search_enabled,
                 # "sort_criteria_index": self.current_sort_criteria_index, # 廃止
                 "sort_button_id": self.current_sort_button_id, # 新しいトグルボタンUI用
@@ -484,6 +488,10 @@ class MainWindow(QMainWindow):
                 self.current_sort_button_id = 0
         logger.info(f"ソートボタンIDを読み込みました: {self.current_sort_button_id} ('{self.sort_criteria_map.get(self.current_sort_button_id, {}).get('name', 'N/A')}')")
 
+        # ★★★ 追加: 空フォルダ削除設定 ★★★
+        self.delete_empty_folders_enabled = self.app_settings.get(DELETE_EMPTY_FOLDERS_ENABLED, True)
+        logger.info(f"空フォルダ削除設定を読み込みました: {'有効' if self.delete_empty_folders_enabled else '無効'}")
+
     def select_folder(self):
         start_dir = ""
         if self.current_folder_path and os.path.isdir(self.current_folder_path):
@@ -493,9 +501,9 @@ class MainWindow(QMainWindow):
         folder_path = QFileDialog.getExistingDirectory(self, "画像フォルダを選択", start_dir)
         if folder_path:
             logger.info(f"選択されたフォルダ: {folder_path}")
-            # ★★★ 空フォルダ削除処理をここに移動 ★★★
-            if os.path.isdir(folder_path):
-                self._try_delete_empty_subfolders(folder_path)
+            # ★★★ 設定に基づいて空フォルダ削除処理を実行 ★★★
+            if self.delete_empty_folders_enabled and os.path.isdir(folder_path):
+                self._try_delete_empty_subfolders(folder_path) 
             self.update_folder_tree(folder_path)
 
     def update_folder_tree(self, folder_path):
@@ -522,9 +530,7 @@ class MainWindow(QMainWindow):
         if self.file_system_model.isDir(index):
             logger.info(f"フォルダがクリックされました: {path}")
             self.current_folder_path = path
-            # ★★★ 空フォルダ削除処理をここに移動 ★★★
-            if os.path.isdir(path):
-                self._try_delete_empty_subfolders(path)
+            # ★★★ フォルダツリークリック時は空フォルダ削除を実行しない ★★★
             self.load_thumbnails_from_folder(path)
         else:
             logger.debug(f"ファイルがクリックされました: {path}")

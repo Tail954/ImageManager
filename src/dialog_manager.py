@@ -11,7 +11,8 @@ from .wc_creator_dialog import WCCreatorDialog
 from .drop_window import DropWindow
 from .constants import (
     APP_SETTINGS_FILE, THUMBNAIL_RIGHT_CLICK_ACTION,
-    WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, Qt as ConstantsQt # Renamed Qt from constants to avoid clash
+    WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
+    Qt as ConstantsQt # Renamed Qt from constants to avoid clash
 )
 # Qt from QtCore is used for Qt.ItemDataRole etc.
 # ConstantsQt might be used if constants.py defines its own Qt related values, but likely not needed here.
@@ -36,6 +37,7 @@ class DialogManager:
                 current_preview_mode=self.main_window.image_preview_mode,
                 current_right_click_action=self.main_window.thumbnail_right_click_action,
                 current_wc_comment_format=self.main_window.wc_creator_comment_format,
+                current_delete_empty_folders_setting=self.main_window.delete_empty_folders_enabled, # ★★★ 追加 ★★★
                 parent=self.main_window
             )
 
@@ -54,6 +56,11 @@ class DialogManager:
             if self.main_window.wc_creator_comment_format != new_wc_comment_format:
                 self.main_window.wc_creator_comment_format = new_wc_comment_format
                 logger.info(f"WC Creator コメント形式が変更されました: {self.main_window.wc_creator_comment_format}")
+
+            new_delete_empty_folders_setting = self.settings_dialog_instance.get_selected_delete_empty_folders_setting() # ★★★ 追加 ★★★
+            if self.main_window.delete_empty_folders_enabled != new_delete_empty_folders_setting: # ★★★ 追加 ★★★
+                self.main_window.delete_empty_folders_enabled = new_delete_empty_folders_setting # ★★★ 追加 ★★★
+                logger.info(f"空フォルダ削除設定が変更されました: {'有効' if self.main_window.delete_empty_folders_enabled else '無効'}") # ★★★ 追加 ★★★
 
             new_size = self.settings_dialog_instance.get_selected_thumbnail_size()
             reply_ok_for_size_change = True # Assume OK if no confirmation needed or confirmed
@@ -85,6 +92,7 @@ class DialogManager:
 
             self.main_window.app_settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.main_window.thumbnail_right_click_action
             self.main_window.app_settings[WC_COMMENT_OUTPUT_FORMAT] = self.main_window.wc_creator_comment_format
+            self.main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
             self.main_window._write_app_settings_file()
         self.settings_dialog_instance = None
 
