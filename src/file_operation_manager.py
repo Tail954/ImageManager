@@ -25,7 +25,7 @@ class FileOperationManager:
             logger.info(f"移動先フォルダが選択されました: {destination_folder}")
             logger.info(f"移動対象ファイル: {self.main_window.selected_file_paths}")
             if self.main_window.file_operations.start_operation("move", self.main_window.selected_file_paths, destination_folder):
-                self._set_file_op_buttons_enabled(False)
+                self.main_window.ui_manager.set_file_op_buttons_enabled_ui(False) # ★★★ UIManager経由 ★★★
                 total_files_to_move = len(self.main_window.selected_file_paths)
                 self.progress_dialog = QProgressDialog(
                     f"ファイルを移動中... (0/{total_files_to_move})",
@@ -50,7 +50,7 @@ class FileOperationManager:
         destination_folder = QFileDialog.getExistingDirectory(self.main_window, "コピー先フォルダを選択", self.main_window.current_folder_path or "")
         if destination_folder:
             if self.main_window.file_operations.start_operation("copy", None, destination_folder, copy_selection_order=self.main_window.copy_selection_order):
-                self._set_file_op_buttons_enabled(False)
+                self.main_window.ui_manager.set_file_op_buttons_enabled_ui(False) # ★★★ UIManager経由 ★★★
                 total_files_to_copy = len(self.main_window.copy_selection_order)
                 self.progress_dialog = QProgressDialog(
                     f"ファイルをコピー中... (0/{total_files_to_copy})",
@@ -69,34 +69,30 @@ class FileOperationManager:
     def _handle_copy_mode_toggled(self, checked):
         self.main_window.is_copy_mode = checked
         if checked:
-            self.main_window.copy_mode_button.setText("Copy Mode: ON")
-            self.main_window.move_files_button.setEnabled(False)
-            self.main_window.copy_files_button.setEnabled(True)
+            self.main_window.ui_manager.update_copy_mode_button_text(True) # ★★★ UIManager経由 ★★★
+            self.main_window.ui_manager.move_files_button.setEnabled(False) # ★★★ UIManager経由 ★★★
+            self.main_window.ui_manager.copy_files_button.setEnabled(True) # ★★★ UIManager経由 ★★★
             self.main_window.deselect_all_thumbnails()
             self.main_window.copy_selection_order.clear()
             logger.info("Copy Mode Enabled.")
         else:
-            self.main_window.copy_mode_button.setText("Copy Mode: OFF")
-            self.main_window.move_files_button.setEnabled(True)
-            self.main_window.copy_files_button.setEnabled(False)
+            self.main_window.ui_manager.update_copy_mode_button_text(False) # ★★★ UIManager経由 ★★★
+            self.main_window.ui_manager.move_files_button.setEnabled(True) # ★★★ UIManager経由 ★★★
+            self.main_window.ui_manager.copy_files_button.setEnabled(False) # ★★★ UIManager経由 ★★★
             self.main_window.deselect_all_thumbnails()
             self.main_window.copy_selection_order.clear()
             logger.info("Copy Mode Disabled (Move Mode Enabled).")
-            for row_idx in range(self.main_window.source_thumbnail_model.rowCount()): # Renamed row to row_idx
-                item = self.main_window.source_thumbnail_model.item(row_idx) # Use row_idx
+            for row_idx in range(self.main_window.ui_manager.source_thumbnail_model.rowCount()):
+                item = self.main_window.ui_manager.source_thumbnail_model.item(row_idx)
                 if item and item.data(SELECTION_ORDER_ROLE) is not None: # 定数 SELECTION_ORDER_ROLE を直接使用
                     item.setData(None, SELECTION_ORDER_ROLE) # 定数 SELECTION_ORDER_ROLE を直接使用
-                    source_idx = self.main_window.source_thumbnail_model.indexFromItem(item)
-                    proxy_idx = self.main_window.filter_proxy_model.mapFromSource(source_idx)
+                    source_idx = self.main_window.ui_manager.source_thumbnail_model.indexFromItem(item)
+                    proxy_idx = self.main_window.ui_manager.filter_proxy_model.mapFromSource(source_idx)
                     if proxy_idx.isValid():
-                         self.main_window.thumbnail_view.update(proxy_idx)
+                         self.main_window.ui_manager.thumbnail_view.update(proxy_idx) # ★★★ UIManager経由 ★★★
 
-    def _set_file_op_buttons_enabled(self, enabled):
-        self.main_window.move_files_button.setEnabled(enabled and not self.main_window.is_copy_mode)
-        self.main_window.copy_files_button.setEnabled(enabled and self.main_window.is_copy_mode)
-        self.main_window.copy_mode_button.setEnabled(enabled)
-        self.main_window.folder_select_button.setEnabled(enabled)
-        self.main_window.folder_tree_view.setEnabled(enabled)
+    # def _set_file_op_buttons_enabled(self, enabled): # このメソッドは UIManager に移管される想定
+    #     self.main_window.ui_manager.set_file_op_buttons_enabled_ui(enabled)
 
     def _handle_file_op_progress(self, processed_count, total_count):
         dialog = self.progress_dialog
@@ -120,7 +116,7 @@ class FileOperationManager:
             self.progress_dialog = None
         QMessageBox.critical(self.main_window, "ファイル操作エラー", f"エラーが発生しました:\n{error_message}")
         self.main_window.statusBar.showMessage("ファイル操作中にエラーが発生しました。", 5000)
-        self._set_file_op_buttons_enabled(True)
+        self.main_window.ui_manager.set_file_op_buttons_enabled_ui(True) # ★★★ UIManager経由 ★★★
 
     def _handle_file_op_finished(self, result):
         logger.info(f"File operation finished. Result: {result}")
@@ -132,7 +128,7 @@ class FileOperationManager:
                 logger.debug("Progress dialog canceled signal was not connected or already disconnected.")
             self.progress_dialog.close()
             self.progress_dialog = None
-        self._set_file_op_buttons_enabled(True)
+        self.main_window.ui_manager.set_file_op_buttons_enabled_ui(True) # ★★★ UIManager経由 ★★★
         # status = result.get('status', 'unknown') # No longer directly used here
         # operation_type = result.get('operation_type', 'unknown') # No longer directly used here
 

@@ -12,7 +12,7 @@ from PyQt6.QtGui import QPainter, QColor, QPaintEvent # Added QPaintEvent for pa
 
 # Assuming src is in PYTHONPATH or tests are run from project root
 from src.settings_dialog import ThumbnailSizePreviewWidget, SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM
-# FIX: Import WC_FORMAT_HASH_COMMENT from constants
+# FIX: Import WC_FORMAT_HASH_COMMENT and DELETE_EMPTY_FOLDERS_ENABLED from constants
 from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, WC_FORMAT_HASH_COMMENT
 
 
@@ -89,6 +89,7 @@ class TestSettingsDialog:
     DEFAULT_THUMBNAIL_SIZE = 128
     DEFAULT_PREVIEW_MODE = PREVIEW_MODE_FIT
     DEFAULT_RIGHT_CLICK_ACTION = RIGHT_CLICK_ACTION_METADATA # Default for tests
+    DEFAULT_DELETE_EMPTY_FOLDERS = True # ★★★ 追加: デフォルト値を定義 ★★★
 
     @pytest.fixture
     def dialog(self, qt_app, mocker):
@@ -102,7 +103,8 @@ class TestSettingsDialog:
             current_preview_mode=self.DEFAULT_PREVIEW_MODE,
             current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION, # Pass new arg
             # FIX: Add current_wc_comment_format argument
-            current_wc_comment_format=WC_FORMAT_HASH_COMMENT # Use a default value from constants
+            current_wc_comment_format=WC_FORMAT_HASH_COMMENT, # Use a default value from constants
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
         )
         return dialog_instance
 
@@ -113,6 +115,7 @@ class TestSettingsDialog:
         assert dialog.initial_preview_mode == self.DEFAULT_PREVIEW_MODE
         assert dialog.initial_right_click_action == self.DEFAULT_RIGHT_CLICK_ACTION
         # FIX: Add assertion for initial_wc_comment_format
+        assert dialog.initial_delete_empty_folders_setting == self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
         assert dialog.initial_wc_comment_format == WC_FORMAT_HASH_COMMENT # Check if the passed value is stored
 
         # Check slider initialization
@@ -155,6 +158,9 @@ class TestSettingsDialog:
         expected_combo_index = dialog.wc_comment_format_combo.findData(dialog.initial_wc_comment_format)
         assert dialog.wc_comment_format_combo.currentIndex() == expected_combo_index
 
+        # ★★★ 追加: delete_empty_folders_checkbox の初期化チェック ★★★
+        assert dialog.delete_empty_folders_checkbox is not None
+        assert dialog.delete_empty_folders_checkbox.isChecked() == self.DEFAULT_DELETE_EMPTY_FOLDERS
 
     def test_thumbnail_slider_changes_preview(self, dialog, mocker):
         mock_preview_set_size = mocker.patch.object(dialog.thumbnail_preview_widget, 'set_size')
@@ -204,6 +210,13 @@ class TestSettingsDialog:
         dialog.wc_comment_format_combo.setCurrentIndex(0)
         assert dialog.get_selected_wc_comment_format() == dialog.wc_comment_format_combo.itemData(0)
 
+    # ★★★ 追加: get_selected_delete_empty_folders_setting のテスト ★★★
+    def test_get_selected_delete_empty_folders_setting(self, dialog):
+        dialog.delete_empty_folders_checkbox.setChecked(True)
+        assert dialog.get_selected_delete_empty_folders_setting() is True
+
+        dialog.delete_empty_folders_checkbox.setChecked(False)
+        assert dialog.get_selected_delete_empty_folders_setting() is False
 
     def test_accept_dialog(self, dialog, mocker):
         mock_super_accept = mocker.patch.object(QDialog, 'accept') # Mock QDialog.accept
@@ -240,7 +253,14 @@ class TestSettingsDialog:
         
         mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(settings_file))
         # FIX: Add current_wc_comment_format argument
-        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION, WC_FORMAT_HASH_COMMENT)
+        dialog_instance = SettingsDialog(
+            current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
+            available_thumbnail_sizes=self.AVAILABLE_SIZES,
+            current_preview_mode=self.DEFAULT_PREVIEW_MODE,
+            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
+            current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+        )
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_ORIGINAL_ZOOM
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM # Check if initial_preview_mode is also set
 
@@ -248,7 +268,14 @@ class TestSettingsDialog:
         with open(settings_file, 'w') as f:
             json.dump({"other_value": "test"}, f)
         # FIX: Add current_wc_comment_format argument
-        dialog_instance_2 = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION, WC_FORMAT_HASH_COMMENT)
+        dialog_instance_2 = SettingsDialog(
+            current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
+            available_thumbnail_sizes=self.AVAILABLE_SIZES,
+            current_preview_mode=self.DEFAULT_PREVIEW_MODE,
+            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
+            current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+        )
         assert dialog_instance_2.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance_2.initial_preview_mode == PREVIEW_MODE_FIT
 
@@ -258,6 +285,13 @@ class TestSettingsDialog:
         mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(non_existent_file))
         
         # FIX: Add current_wc_comment_format argument
-        dialog_instance = SettingsDialog(self.DEFAULT_THUMBNAIL_SIZE, self.AVAILABLE_SIZES, self.DEFAULT_PREVIEW_MODE, self.DEFAULT_RIGHT_CLICK_ACTION, WC_FORMAT_HASH_COMMENT)
+        dialog_instance = SettingsDialog(
+            current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
+            available_thumbnail_sizes=self.AVAILABLE_SIZES,
+            current_preview_mode=self.DEFAULT_PREVIEW_MODE,
+            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
+            current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+        )
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_FIT

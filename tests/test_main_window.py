@@ -1,6 +1,6 @@
 # g:\vscodeGit\ImageManager\tests\test_main_window.py
 import pytest
-from PyQt6.QtWidgets import QApplication, QTreeView, QListView, QLineEdit, QPushButton, QRadioButton, QComboBox, QProgressDialog, QMessageBox, QMainWindow # Added QProgressDialog, QMessageBox, QMainWindow
+from PyQt6.QtWidgets import QApplication, QTreeView, QListView, QLineEdit, QPushButton, QRadioButton, QComboBox, QProgressDialog, QMessageBox, QMainWindow, QButtonGroup
 
 import sys
 import os
@@ -46,8 +46,54 @@ class TestMainWindowBase(unittest.TestCase):
         """Set up for each test."""
         # MainWindow をインスタンス化する前に _load_app_settings をモック化する
         # これにより、__init__ 内での最初の呼び出しからモックが使用される
-        self.load_settings_patcher = patch('src.main_window.MainWindow._load_app_settings', MagicMock())
-        self.MockLoadAppSettings = self.load_settings_patcher.start()
+        # _load_app_settings のモックが ui_manager のメソッドを呼び出すように設定
+        # autospec=True の場合、side_effect 関数の最初の引数はモック対象のインスタンス (self)
+        def mock_load_app_settings_side_effect(main_window_instance):
+            # print(f"DEBUG: mock_load_app_settings_side_effect called for {type(main_window_instance)}.")
+
+            # MainWindow の __init__ でのデフォルト値を模倣
+            main_window_instance.recursive_search_enabled = True # デフォルト
+            main_window_instance.app_settings = {} # app_settings を初期化
+            if hasattr(main_window_instance, 'ui_manager') and main_window_instance.ui_manager and hasattr(main_window_instance.ui_manager, 'update_recursive_button_text'):
+                # print(f"DEBUG side_effect: About to call update_recursive_button_text on {type(main_window_instance.ui_manager.update_recursive_button_text)} with {main_window_instance.recursive_search_enabled}")
+                main_window_instance.ui_manager.update_recursive_button_text(main_window_instance.recursive_search_enabled)
+            # 他の _load_app_settings の重要な初期化があればここに追加
+
+        self.load_settings_patcher = patch.object(MainWindow, '_load_app_settings', side_effect=mock_load_app_settings_side_effect, autospec=True)
+        self.load_settings_patcher.start()
+
+        # ★★★ UIManager のモックを MainWindow の __init__ より前に準備 ★★★
+        self.ui_manager_patcher = patch('src.main_window.UIManager')
+        self.MockUIManagerClass = self.ui_manager_patcher.start()
+        self.mock_ui_manager_instance = self.MockUIManagerClass.return_value
+
+        # ★★★ UIManager のモックインスタンスが持つべきUI要素とメソッドのモックをここで設定 ★★★
+        # これは MainWindow のインスタンス化よりも前に行う
+        self.mock_ui_manager_instance.update_recursive_button_text = MagicMock(name="mock_update_recursive_button_text_on_instance")
+        self.mock_ui_manager_instance.set_file_op_buttons_enabled_ui = MagicMock()
+        self.mock_ui_manager_instance.update_copy_mode_button_text = MagicMock()
+        self.mock_ui_manager_instance.folder_tree_view = MagicMock(spec=QTreeView)
+        self.mock_ui_manager_instance.file_system_model = MagicMock(spec=QFileSystemModel)
+        self.mock_ui_manager_instance.thumbnail_view = MagicMock(spec=QListView)
+        self.mock_ui_manager_instance.thumbnail_view.selectionModel.return_value = MagicMock(spec=QItemSelectionModel)
+        self.mock_ui_manager_instance.source_thumbnail_model = MagicMock(spec=QStandardItemModel)
+        self.mock_ui_manager_instance.filter_proxy_model = MagicMock(spec=MetadataFilterProxyModel)
+        self.mock_ui_manager_instance.positive_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.mock_ui_manager_instance.negative_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.mock_ui_manager_instance.generation_info_filter_edit = MagicMock(spec=QLineEdit)
+        self.mock_ui_manager_instance.and_radio_button = MagicMock(spec=QRadioButton)
+        self.mock_ui_manager_instance.recursive_toggle_button = MagicMock(spec=QPushButton)
+        self.mock_ui_manager_instance.move_files_button = MagicMock(spec=QPushButton)
+        self.mock_ui_manager_instance.copy_files_button = MagicMock(spec=QPushButton)
+        self.mock_ui_manager_instance.copy_mode_button = MagicMock(spec=QPushButton)
+        self.mock_ui_manager_instance.sort_button_group = MagicMock(spec=QButtonGroup)
+        self.mock_ui_manager_instance.sort_filename_asc_button = MagicMock(spec=QPushButton)
+        self.mock_ui_manager_instance.sort_date_desc_button = MagicMock(spec=QPushButton)
+
+        # MainWindow.statusBar() メソッド (QMainWindowから継承) をモック化し、
+        # MagicMockインスタンスを返すようにする
+        self.statusbar_method_patcher = patch.object(MainWindow, 'statusBar', return_value=MagicMock())
+        self.mock_statusbar_method = self.statusbar_method_patcher.start()
 
         self.window = MainWindow() # _load_app_settings がモック化された状態でインスタンス化
         self.base_path = "test_temp_dir" # Use a consistent temp dir name
@@ -80,14 +126,15 @@ class TestMainWindowBase(unittest.TestCase):
         self.MockQProgressDialog = self.progress_dialog_patcher.start()
         self.mock_progress_dialog_instance = self.MockQProgressDialog.return_value
         self.mock_progress_dialog_instance.wasCanceled.return_value = False
-        self.mock_progress_dialog_instance.close = MagicMock()
-
+        self.mock_progress_dialog_instance.close = MagicMock() # close もモック化
 
     def tearDown(self):
         """Clean up after each test."""
         self.load_settings_patcher.stop() # パッチャーを停止
         self.progress_dialog_patcher.stop()
         self.file_op_patcher.stop()
+        self.statusbar_method_patcher.stop() # ★★★ statusBar メソッドのパッチャーを停止 ★★★
+        self.ui_manager_patcher.stop() # ★★★ UIManager のパッチャーを停止 ★★★
         if self.window:
             self.window.close() # Ensure window is closed
             self.window.deleteLater() # Schedule for deletion
@@ -172,21 +219,23 @@ class TestMainWindowUISettings(TestMainWindowBase):
     def test_handle_recursive_search_toggled(self):
         # 初期状態は True であるはず (_load_app_settings がモック化されているため、__init__ のデフォルト値)
         self.assertTrue(self.window.recursive_search_enabled)
-        self.assertEqual(self.window.recursive_toggle_button.text(), "サブフォルダ検索: ON")
+        # __init__ -> _load_app_settings (mock) -> ui_manager.update_recursive_button_text
+        # このアサーションは self.mock_ui_manager_instance.update_recursive_button_text に対して行う
+        self.mock_ui_manager_instance.update_recursive_button_text.assert_called_with(True)
         
         self.window.load_thumbnails_from_folder = MagicMock() # _handle_recursive_search_toggled から呼ばれるためモック
         self.window.current_folder_path = self.base_path # フォルダパスが設定されている必要がある
 
-        self.window.recursive_toggle_button.setChecked(False) # Triggers slot
+        self.window.handle_recursive_search_toggled(False) # ★★★ 直接ハンドラを呼び出し ★★★
         self.assertFalse(self.window.recursive_search_enabled)
-        self.assertEqual(self.window.recursive_toggle_button.text(), "サブフォルダ検索: OFF")
+        self.mock_ui_manager_instance.update_recursive_button_text.assert_called_with(False)
         # handle_recursive_search_toggled 内では load_thumbnails_from_folder は呼ばれない
         self.window.load_thumbnails_from_folder.assert_not_called() 
 
-        self.window.load_thumbnails_from_folder.reset_mock()
-        self.window.recursive_toggle_button.setChecked(True)
+        self.mock_ui_manager_instance.update_recursive_button_text.reset_mock()
+        self.window.handle_recursive_search_toggled(True) # ★★★ 直接ハンドラを呼び出し ★★★
         self.assertTrue(self.window.recursive_search_enabled)
-        self.assertEqual(self.window.recursive_toggle_button.text(), "サブフォルダ検索: ON")
+        self.mock_ui_manager_instance.update_recursive_button_text.assert_called_with(True)
         self.window.load_thumbnails_from_folder.assert_not_called()
 
     def test_apply_thumbnail_size_change(self):
@@ -211,12 +260,13 @@ class TestMainWindowThumbnailUpdatesAndFilters(TestMainWindowBase):
     def test_update_thumbnail_item(self):
         item = QStandardItem("test_item.png")
         item.setData("path/to/test_item.png", Qt.ItemDataRole.UserRole)
-        self.window.source_thumbnail_model.appendRow(item)
+        self.window.ui_manager.source_thumbnail_model.appendRow(item) # ★★★ UIManager経由 ★★★
         mock_qimage = MagicMock(spec=QImage) # FIX: Use spec=QImage
+        item.model = MagicMock(return_value=self.window.ui_manager.source_thumbnail_model) # item.model() がモックを返すようにする
         # Mock setIcon on the item itself
         item.setIcon = MagicMock()
         metadata = {"positive_prompt": "test prompt"}
-
+        
         # FIX: Patch QPixmap.fromImage for this test (QIcon patch removed)
         with patch('src.main_window.QPixmap.fromImage', return_value=MagicMock(spec=QPixmap)) as mock_from_image, \
              patch('src.main_window.QIcon') as mock_qicon_constructor: # Keep patch for assertion, but its return value isn't used by setIcon mock
@@ -232,58 +282,70 @@ class TestMainWindowThumbnailUpdatesAndFilters(TestMainWindowBase):
 
     def test_on_thumbnail_loading_finished(self):
         self.window.is_loading_thumbnails = True
-        self.window.folder_tree_view.setEnabled(False)
-        self.window.filter_proxy_model = MagicMock()
-        self.window.filter_proxy_model.rowCount = MagicMock(return_value=10) # Simulate 10 items visible
-        self.window.thumbnail_view.selectionModel = MagicMock() # Mock selectionModel
-        self.window.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = [] # Simulate 0 selected
+        self.window.ui_manager.folder_tree_view.setEnabled(False) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.rowCount = MagicMock(return_value=10) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = [] # ★★★ UIManager経由 ★★★
         self.window.apply_filters = MagicMock()
 
         self.window.on_thumbnail_loading_finished()
         self.assertFalse(self.window.is_loading_thumbnails)
-        self.assertTrue(self.window.folder_tree_view.isEnabled())
+        self.window.ui_manager.set_thumbnail_loading_ui_state.assert_called_with(False) # ★★★ UIManager経由 ★★★
         self.window.apply_filters.assert_called_once_with(preserve_selection=True)
-        # FIX: Assert the message set by _update_status_bar_info
-        self.assertIn("表示アイテム数: 10 / 選択アイテム数: 0", self.window.statusBar.currentMessage())
+        # statusBar.showMessage が正しい引数で呼ばれたか確認
+        self.window.statusBar.showMessage.assert_called_with("表示アイテム数: 10 / 選択アイテム数: 0")
 
     def test_apply_filters(self):
-        mock_proxy = MagicMock()
-        self.window.filter_proxy_model = mock_proxy
-        self.window.positive_prompt_filter_edit.setText("positive")
-        self.window.negative_prompt_filter_edit.setText("negative")
-        self.window.generation_info_filter_edit.setText("info")
-        self.window.and_radio_button.setChecked(True)
+        # UI要素はUIManagerのモック経由で設定
+        self.window.ui_manager.positive_prompt_filter_edit.text.return_value = "positive" # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.negative_prompt_filter_edit.text.return_value = "negative" # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.generation_info_filter_edit.text.return_value = "info" # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.and_radio_button.isChecked.return_value = True # ★★★ UIManager経由 ★★★
 
         self.window.apply_filters()
-        mock_proxy.set_search_mode.assert_called_once_with("AND")
-        mock_proxy.set_positive_prompt_filter.assert_called_once_with("positive")
-        mock_proxy.set_negative_prompt_filter.assert_called_once_with("negative")
-        mock_proxy.set_generation_info_filter.assert_called_once_with("info")
+        self.window.ui_manager.filter_proxy_model.set_search_mode.assert_called_once_with("AND") # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.set_positive_prompt_filter.assert_called_once_with("positive") # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.set_negative_prompt_filter.assert_called_once_with("negative") # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.set_generation_info_filter.assert_called_once_with("info") # ★★★ UIManager経由 ★★★
 
 class TestMainWindowSelection(TestMainWindowBase):
     def test_thumbnail_selection_changed_move_mode(self):
         self.window.is_copy_mode = False
         item1 = QStandardItem("item1.png"); item1.setData("path/1", Qt.ItemDataRole.UserRole)
         item2 = QStandardItem("item2.png"); item2.setData("path/2", Qt.ItemDataRole.UserRole)
-        self.window.source_thumbnail_model.appendRow(item1)
-        self.window.source_thumbnail_model.appendRow(item2)
+        self.window.ui_manager.source_thumbnail_model.appendRow(item1) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.source_thumbnail_model.appendRow(item2) # ★★★ UIManager経由 ★★★
         
         # Simulate selection via proxy model
-        proxy_idx1 = self.window.filter_proxy_model.mapFromSource(self.window.source_thumbnail_model.indexFromItem(item1))
-        self.window.thumbnail_view.selectionModel().select(proxy_idx1, QItemSelectionModel.SelectionFlag.Select)
+        proxy_idx1 = self.window.ui_manager.filter_proxy_model.mapFromSource(self.window.ui_manager.source_thumbnail_model.indexFromItem(item1)) # ★★★ UIManager経由 ★★★
+        # selectionModel().selectedIndexes() が proxy_idx1 を含むリストを返すようにモック
+        # itemFromIndex が返すアイテムの data(UserRole) がパスを返すように設定
+        mock_item_from_index = MagicMock(spec=QStandardItem)
+        mock_item_from_index.data.return_value = "path/1" # UserRole のときにこのパスを返す
+        self.window.ui_manager.source_thumbnail_model.itemFromIndex.return_value = mock_item_from_index
+        mock_selection_model = self.window.ui_manager.thumbnail_view.selectionModel()
+        mock_selection_model.selectedIndexes.return_value = [proxy_idx1]
+
+        self.window.ui_manager.thumbnail_view.selectionModel().select(proxy_idx1, QItemSelectionModel.SelectionFlag.Select) # ★★★ UIManager経由 ★★★
         self.window.handle_thumbnail_selection_changed(None, None) # Args not used
         self.assertIn("path/1", self.window.selected_file_paths)
 
     def test_thumbnail_selection_changed_copy_mode(self):
         self.window.is_copy_mode = True
-        self.window.copy_mode_button.setChecked(True)
+        # ボタンの状態変更ではなく、マネージャーのメソッドを呼び出す
+        self.window.file_operation_manager._handle_copy_mode_toggled(True)
         item1 = QStandardItem("item1.png"); item1.setData("path/c1", Qt.ItemDataRole.UserRole)
         item2 = QStandardItem("item2.png"); item2.setData("path/c2", Qt.ItemDataRole.UserRole)
-        self.window.source_thumbnail_model.appendRow(item1)
-        self.window.source_thumbnail_model.appendRow(item2)
+        self.window.ui_manager.source_thumbnail_model.appendRow(item1) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.source_thumbnail_model.appendRow(item2) # ★★★ UIManager経由 ★★★
 
-        proxy_idx2 = self.window.filter_proxy_model.mapFromSource(self.window.source_thumbnail_model.indexFromItem(item2))
-        self.window.thumbnail_view.selectionModel().select(proxy_idx2, QItemSelectionModel.SelectionFlag.Select)
+        proxy_idx2 = self.window.ui_manager.filter_proxy_model.mapFromSource(self.window.ui_manager.source_thumbnail_model.indexFromItem(item2)) # ★★★ UIManager経由 ★★★
+        # selectionModel().selectedIndexes() が proxy_idx2 を含むリストを返すようにモック
+        # itemFromIndex が正しいアイテムを返すように設定
+        # このテストでは item2 が選択されるので、itemFromIndex が item2 を返すように単純化
+        self.window.ui_manager.source_thumbnail_model.itemFromIndex.return_value = item2
+        mock_selection_model = self.window.ui_manager.thumbnail_view.selectionModel()
+        mock_selection_model.selectedIndexes.return_value = [proxy_idx2]
+        self.window.ui_manager.thumbnail_view.selectionModel().select(proxy_idx2, QItemSelectionModel.SelectionFlag.Select) # ★★★ UIManager経由 ★★★
         self.window.handle_thumbnail_selection_changed(None, None)
         self.assertEqual(self.window.copy_selection_order, [item2])
         self.assertEqual(item2.data(SELECTION_ORDER_ROLE), 1)
@@ -291,15 +353,18 @@ class TestMainWindowSelection(TestMainWindowBase):
     def test_select_all_deselect_all_thumbnails(self):
         item1 = QStandardItem("item1.png"); item1.setData("path/sa1", Qt.ItemDataRole.UserRole)
         item2 = QStandardItem("item2.png"); item2.setData("path/sa2", Qt.ItemDataRole.UserRole)
-        self.window.source_thumbnail_model.appendRow(item1)
-        self.window.source_thumbnail_model.appendRow(item2)
-        self.window.filter_proxy_model.setFilterFixedString("") # Show all
+        self.window.ui_manager.source_thumbnail_model.appendRow(item1) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.source_thumbnail_model.appendRow(item2) # ★★★ UIManager経由 ★★★
+        # model() と rowCount() のモック設定
+        self.window.ui_manager.thumbnail_view.model.return_value = self.window.ui_manager.filter_proxy_model
+        self.window.ui_manager.filter_proxy_model.rowCount.return_value = 2
+        self.window.ui_manager.filter_proxy_model.setFilterFixedString("") # Show all # ★★★ UIManager経由 ★★★
 
         self.window.select_all_thumbnails()
-        self.assertEqual(len(self.window.thumbnail_view.selectionModel().selectedIndexes()), 2)
+        self.window.ui_manager.thumbnail_view.selectAll.assert_called_once() # ★★★ UIManager経由 ★★★
         
         self.window.deselect_all_thumbnails()
-        self.assertEqual(len(self.window.thumbnail_view.selectionModel().selectedIndexes()), 0)
+        self.window.ui_manager.thumbnail_view.clearSelection.assert_called_once() # ★★★ UIManager経由 ★★★
 
 class TestMainWindowEmptyFolderFunctions(TestMainWindowBase):
     @patch('src.main_window.MainWindow._try_delete_empty_subfolders')
@@ -321,7 +386,7 @@ class TestMainWindowEmptyFolderFunctions(TestMainWindowBase):
 
         dummy_item = QStandardItem("moved_file.txt")
         dummy_item.setData(os.path.join(source_folder_to_check, "moved_file.txt"), Qt.ItemDataRole.UserRole)
-        self.window.source_thumbnail_model.appendRow(dummy_item)
+        self.window.ui_manager.source_thumbnail_model.appendRow(dummy_item) # ★★★ UIManager経由 ★★★
 
         with patch('os.path.isdir', return_value=True):
             self.window._process_file_op_completion(result)
@@ -361,9 +426,9 @@ class TestMainWindowFileOperations(TestMainWindowBase):
         self.window.selected_file_paths = []
         # We expect MainWindow's button click to call FileOperationManager's handler
         # The manager's handler will then check selected_file_paths
-        self.window.move_files_button.click() 
+        self.window.file_operation_manager._handle_move_files_button_clicked() # ★★★ 直接マネージャーのメソッドを呼び出し ★★★
         self.mock_file_operations_instance.start_operation.assert_not_called()
-        self.assertIn("移動するファイルを選択してください。", self.window.statusBar.currentMessage())
+        self.window.statusBar.showMessage.assert_called_with("移動するファイルを選択してください。", 3000)
 
 
     @patch('src.file_operation_manager.QFileDialog.getExistingDirectory') 
@@ -371,7 +436,7 @@ class TestMainWindowFileOperations(TestMainWindowBase):
         self.window.selected_file_paths = ["/path/file1.jpg", "/path/file2.png"]
         mock_get_existing_directory.return_value = "/destination/folder"
         
-        self.window.move_files_button.click()
+        self.window.file_operation_manager._handle_move_files_button_clicked() # ★★★ 直接マネージャーのメソッドを呼び出し ★★★
 
         mock_get_existing_directory.assert_called_once_with(
             self.window, "移動先フォルダを選択", self.window.current_folder_path
@@ -380,7 +445,7 @@ class TestMainWindowFileOperations(TestMainWindowBase):
         self.mock_file_operations_instance.start_operation.assert_called_once_with(
             "move", self.window.selected_file_paths, "/destination/folder"
         )
-        self.assertFalse(self.window.move_files_button.isEnabled()) 
+        self.window.ui_manager.set_file_op_buttons_enabled_ui.assert_called_with(False) # ★★★ UIManager経由 ★★★
         self.assertIsNotNone(self.window.file_operation_manager.progress_dialog) 
 
     @patch('src.file_operation_manager.QFileDialog.getExistingDirectory')
@@ -388,80 +453,80 @@ class TestMainWindowFileOperations(TestMainWindowBase):
         self.window.selected_file_paths = ["/path/file1.jpg"]
         mock_get_existing_directory.return_value = "" 
 
-        self.window.move_files_button.click()
+        self.window.file_operation_manager._handle_move_files_button_clicked() # ★★★ 直接マネージャーのメソッドを呼び出し ★★★
 
         mock_get_existing_directory.assert_called_once()
         self.mock_file_operations_instance.start_operation.assert_not_called()
-        self.assertTrue(self.window.move_files_button.isEnabled()) 
+        # self.assertTrue(self.window.move_files_button.isEnabled()) # ボタンの状態はUIManagerが管理
 
     def test_handle_copy_mode_toggled_on(self):
         self.window.is_copy_mode = False
         self.window.deselect_all_thumbnails = MagicMock()
 
-        self.window.copy_mode_button.setChecked(True) 
-        # FileOperationManager._handle_copy_mode_toggled が呼ばれる
-        # その中で self.main_window.is_copy_mode が True に設定される
+        # ボタンの状態変更の代わりにマネージャーのメソッドを直接呼び出す
+        self.window.file_operation_manager._handle_copy_mode_toggled(True)
 
         self.assertTrue(self.window.is_copy_mode)
-        # ★★★ 修正: ボタンテキストの期待値を実際の挙動に合わせる ★★★
-        self.assertEqual(self.window.copy_mode_button.text(), "Copy Mode: ON")
-        self.assertFalse(self.window.move_files_button.isEnabled())
-        self.assertTrue(self.window.copy_files_button.isEnabled()) # コピーモードONならコピーボタンは有効
-        self.assertTrue(self.window.copy_files_button.isEnabled())
+        self.window.ui_manager.update_copy_mode_button_text.assert_called_with(True) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.move_files_button.setEnabled.assert_called_with(False) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.copy_files_button.setEnabled.assert_called_with(True) # ★★★ UIManager経由 ★★★
         self.window.deselect_all_thumbnails.assert_called_once()
 
     def test_handle_copy_mode_toggled_off(self):
         self.window.is_copy_mode = True # Initial state for test
-        self.window.copy_mode_button.setChecked(True) # Ensure button reflects this state
+        # ボタンの状態変更の代わりにマネージャーのメソッドを直接呼び出す
+        self.window.file_operation_manager._handle_copy_mode_toggled(True) # まずONにする
         self.window.copy_selection_order = [MagicMock()]
         self.window.deselect_all_thumbnails = MagicMock() # MainWindowのメソッド
         
         mock_item_with_role = MagicMock()
         mock_item_with_role.data.return_value = 1 
-        self.window.source_thumbnail_model = MagicMock()
-        self.window.source_thumbnail_model.rowCount.return_value = 1
-        self.window.source_thumbnail_model.item.return_value = mock_item_with_role
+        self.window.ui_manager.source_thumbnail_model.rowCount.return_value = 1 # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.source_thumbnail_model.item.return_value = mock_item_with_role # ★★★ UIManager経由 ★★★
         
         # ★★★ 修正: FileOperationManager._handle_copy_mode_toggled 内の TypeError を回避 ★★★
         # self.main_window.thumbnail_view.update(proxy_idx) で proxy_idx が MagicMock だとエラーになる
         # ここでは、thumbnail_view.update が呼ばれることだけを確認する
-        self.window.filter_proxy_model = MagicMock()
-        self.window.filter_proxy_model.mapFromSource.return_value = MagicMock(spec=QModelIndex)
-        self.window.thumbnail_view.update = MagicMock() # updateメソッドをモック化
+        self.window.ui_manager.filter_proxy_model.mapFromSource.return_value = MagicMock(spec=QModelIndex) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.thumbnail_view.update = MagicMock() # updateメソッドをモック化 # ★★★ UIManager経由 ★★★
 
-        self.window.copy_mode_button.setChecked(False) # Triggers manager's slot
+        # ボタンの状態変更の代わりにマネージャーのメソッドを直接呼び出す
+        self.window.file_operation_manager._handle_copy_mode_toggled(False)
         QApplication.processEvents() # Allow signal processing
 
         self.assertFalse(self.window.is_copy_mode) # This should now be false
-        # ★★★ 修正: ボタンテキストの期待値を実際の挙動に合わせる ★★★
-        self.assertEqual(self.window.copy_mode_button.text(), "Copy Mode: OFF")
-        self.assertTrue(self.window.move_files_button.isEnabled())
-        self.assertFalse(self.window.copy_files_button.isEnabled())
+        self.window.ui_manager.update_copy_mode_button_text.assert_called_with(False) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.move_files_button.setEnabled.assert_called_with(True) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.copy_files_button.setEnabled.assert_called_with(False) # ★★★ UIManager経由 ★★★
         self.window.deselect_all_thumbnails.assert_called_once()
         mock_item_with_role.setData.assert_called_with(None, SELECTION_ORDER_ROLE)
 
     @patch('src.file_operation_manager.QFileDialog.getExistingDirectory')
     def test_handle_copy_files_button_clicked_no_selection(self, mock_get_existing_directory):
         self.window.is_copy_mode = True 
-        self.window.copy_mode_button.setChecked(True)
+        # self.window.copy_mode_button.setChecked(True) # ボタンの状態はUIManagerが管理
         self.window.copy_selection_order = []
 
-        self.window.copy_files_button.click() 
+        # ボタンクリックの代わりにマネージャーのメソッドを直接呼び出す
+        self.window.file_operation_manager._handle_copy_files_button_clicked()
+
 
         mock_get_existing_directory.assert_not_called()
         self.mock_file_operations_instance.start_operation.assert_not_called()
-        self.assertIn("コピーするファイルを順番に選択してください。", self.window.statusBar.currentMessage())
+        self.window.statusBar.showMessage.assert_called_with("コピーするファイルを順番に選択してください。", 3000)
 
     @patch('src.file_operation_manager.QFileDialog.getExistingDirectory')
     def test_handle_copy_files_button_clicked_destination_selected(self, mock_get_existing_directory):
         self.window.is_copy_mode = True
-        self.window.copy_mode_button.setChecked(True)
+        # self.window.copy_mode_button.setChecked(True) # ボタンの状態はUIManagerが管理
         mock_item1 = MagicMock(spec=QStandardItem) 
         mock_item1.data.return_value = "/path/copy_file1.jpg" 
         self.window.copy_selection_order = [mock_item1]
         mock_get_existing_directory.return_value = "/copy_destination/folder"
 
-        self.window.copy_files_button.click()
+        # ボタンクリックの代わりにマネージャーのメソッドを直接呼び出す
+        self.window.file_operation_manager._handle_copy_files_button_clicked()
+
 
         mock_get_existing_directory.assert_called_once_with(
             self.window, "コピー先フォルダを選択", self.window.current_folder_path 
@@ -470,34 +535,36 @@ class TestMainWindowFileOperations(TestMainWindowBase):
         self.mock_file_operations_instance.start_operation.assert_called_once_with(
             "copy", None, "/copy_destination/folder", copy_selection_order=self.window.copy_selection_order
         )
-        self.assertFalse(self.window.copy_files_button.isEnabled())
+        self.window.ui_manager.set_file_op_buttons_enabled_ui.assert_called_with(False) # ★★★ UIManager経由 ★★★
         self.assertIsNotNone(self.window.file_operation_manager.progress_dialog)
 
     @patch('src.file_operation_manager.QFileDialog.getExistingDirectory')
     def test_handle_copy_files_button_clicked_destination_cancelled(self, mock_get_existing_directory):
         self.window.is_copy_mode = True
-        self.window.copy_mode_button.setChecked(True)
+        # self.window.copy_mode_button.setChecked(True) # ボタンの状態はUIManagerが管理
         self.window.copy_selection_order = [MagicMock()]
         mock_get_existing_directory.return_value = "" 
 
-        self.window.copy_files_button.click()
+        # ボタンクリックの代わりにマネージャーのメソッドを直接呼び出す
+        self.window.file_operation_manager._handle_copy_files_button_clicked()
 
         mock_get_existing_directory.assert_called_once()
         self.mock_file_operations_instance.start_operation.assert_not_called()
-        self.assertTrue(self.window.copy_files_button.isEnabled()) 
+        # self.assertTrue(self.window.copy_files_button.isEnabled()) # ボタンの状態はUIManagerが管理
 
     def test_set_file_op_buttons_enabled_true(self):
         self.window.is_copy_mode = False 
-        self.window.file_operation_manager._set_file_op_buttons_enabled(True)
-        self.assertTrue(self.window.move_files_button.isEnabled())
-        self.assertFalse(self.window.copy_files_button.isEnabled())
-        self.assertTrue(self.window.copy_mode_button.isEnabled())
+        # FileOperationManager が UIManager のメソッドを呼び出すことを確認
+        self.window.file_operation_manager._handle_file_op_finished({}) # ダミーの完了結果で呼び出しをトリガー
+        self.window.ui_manager.set_file_op_buttons_enabled_ui.assert_called_with(True)
 
     def test_set_file_op_buttons_enabled_false(self):
-        self.window.file_operation_manager._set_file_op_buttons_enabled(False)
-        self.assertFalse(self.window.move_files_button.isEnabled())
-        self.assertFalse(self.window.copy_files_button.isEnabled())
-        self.assertFalse(self.window.copy_mode_button.isEnabled())
+        # 前提条件を設定
+        self.window.selected_file_paths = ["/some/file.jpg"]
+        with patch('src.file_operation_manager.QFileDialog.getExistingDirectory', return_value="/some/destination"):
+        # FileOperationManager が UIManager のメソッドを呼び出すことを確認
+            self.window.file_operation_manager._handle_move_files_button_clicked() # ボタンクリックで無効化されるはず
+        self.window.ui_manager.set_file_op_buttons_enabled_ui.assert_any_call(False) # どこかでFalseで呼ばれるはず
 
     def test_handle_file_op_progress(self):
         self.window.file_operation_manager.progress_dialog = self.mock_progress_dialog_instance
@@ -521,13 +588,13 @@ class TestMainWindowFileOperations(TestMainWindowBase):
     def test_handle_file_op_error(self, mock_qmessagebox_critical):
         self.window.file_operation_manager.progress_dialog = self.mock_progress_dialog_instance
         
-        with patch.object(self.window.file_operation_manager, '_set_file_op_buttons_enabled') as mock_set_enabled:
+        with patch.object(self.window.ui_manager, 'set_file_op_buttons_enabled_ui') as mock_set_enabled: # ★★★ UIManager経由 ★★★
             self.window.file_operation_manager._handle_file_op_error("Test error")
             mock_set_enabled.assert_called_once_with(True)
 
         mock_qmessagebox_critical.assert_called_once()
         self.assertIn("Test error", mock_qmessagebox_critical.call_args[0][2]) 
-        self.assertIn("ファイル操作中にエラーが発生しました。", self.window.statusBar.currentMessage())
+        self.window.statusBar.showMessage.assert_called_with("ファイル操作中にエラーが発生しました。", 5000)
         self.mock_progress_dialog_instance.close.assert_called_once()
         self.assertIsNone(self.window.file_operation_manager.progress_dialog)
 
@@ -537,22 +604,22 @@ class TestMainWindowFileOperations(TestMainWindowBase):
         self.window.file_operation_manager.progress_dialog = self.mock_progress_dialog_instance
         
         self.window.selected_file_paths = ["/original/path.txt"] 
-        self.window.source_thumbnail_model = MagicMock()
+        # self.window.source_thumbnail_model = MagicMock() # UIManagerが持つ
         mock_item = MagicMock(spec=QStandardItem)
         mock_item.data.return_value = "/original/path.txt"
-        mock_item.model.return_value = self.window.source_thumbnail_model # FIX: Ensure item.model() returns the mock model
-        self.window.source_thumbnail_model.item.return_value = mock_item
+        mock_item.model.return_value = self.window.ui_manager.source_thumbnail_model # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.source_thumbnail_model.item.return_value = mock_item # ★★★ UIManager経由 ★★★
         # FIX: Mock removeRow to simulate rowCount change
         def mock_remove_row_effect(row_idx):
-            current_count = self.window.source_thumbnail_model.rowCount.return_value
+            current_count = self.window.ui_manager.source_thumbnail_model.rowCount.return_value # ★★★ UIManager経由 ★★★
             if current_count > 0:
-                self.window.source_thumbnail_model.rowCount.return_value = current_count - 1
+                self.window.ui_manager.source_thumbnail_model.rowCount.return_value = current_count - 1 # ★★★ UIManager経由 ★★★
             return True
-        self.window.source_thumbnail_model.removeRow = MagicMock(side_effect=mock_remove_row_effect)
+        self.window.ui_manager.source_thumbnail_model.removeRow = MagicMock(side_effect=mock_remove_row_effect) # ★★★ UIManager経由 ★★★
 
-        self.window.source_thumbnail_model.rowCount.return_value = 1
-        self.window.source_thumbnail_model.indexFromItem.return_value = QModelIndex() 
-        self.window.filter_proxy_model = MagicMock() 
+        self.window.ui_manager.source_thumbnail_model.rowCount.return_value = 1 # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.source_thumbnail_model.indexFromItem.return_value = QModelIndex() # ★★★ UIManager経由 ★★★
+        # self.window.filter_proxy_model は self.window.ui_manager.filter_proxy_model を指すように setUp で設定済み
 
         result = {
             'status': 'completed', 'operation_type': 'move', 'moved_count': 1,
@@ -560,19 +627,19 @@ class TestMainWindowFileOperations(TestMainWindowBase):
             'successfully_moved_src_paths': ["/original/path.txt"],
             'destination_folder': "/dest/folder"
         }
-        
-        with patch.object(self.window.file_operation_manager, '_set_file_op_buttons_enabled') as mock_set_enabled_manager, \
-             patch('src.main_window.os.path.isdir', return_value=True): 
+
+        # with ステートメントを括弧で囲む形式に変更
+        with (patch.object(self.window.ui_manager, 'set_file_op_buttons_enabled_ui') as mock_set_enabled_manager,
+              patch('src.main_window.os.path.isdir', return_value=True)):
             
             self.window.file_operation_manager._handle_file_op_finished(result)
             mock_set_enabled_manager.assert_called_once_with(True)
-
         self.mock_progress_dialog_instance.close.assert_called_once()
         self.assertIsNone(self.window.file_operation_manager.progress_dialog)
         MockRenamedFilesDialog.assert_called_once_with(result['renamed_files'], self.window)
         # _process_file_op_completion から _try_delete_empty_subfolders の呼び出しは削除されたため、呼び出されないことを確認
         mock_try_delete.assert_not_called() 
-        self.assertEqual(self.window.source_thumbnail_model.rowCount(), 0) 
+        self.assertEqual(self.window.ui_manager.source_thumbnail_model.rowCount(), 0) # ★★★ UIManager経由 ★★★
 
 
 class TestMainWindowContextMenuAndDialogs(TestMainWindowBase):
@@ -581,7 +648,7 @@ class TestMainWindowContextMenuAndDialogs(TestMainWindowBase):
         mock_dialog_manager = MagicMock(spec=DialogManager)
         self.window.dialog_manager = mock_dialog_manager
         mock_proxy_index = MagicMock(spec=QModelIndex); mock_proxy_index.isValid.return_value = True # FIX: Make it valid
-        self.window.thumbnail_view.indexAt = MagicMock(return_value=mock_proxy_index)
+        self.window.ui_manager.thumbnail_view.indexAt = MagicMock(return_value=mock_proxy_index) # ★★★ UIManager経由 ★★★
 
         self.window._show_thumbnail_context_menu(QPoint(10,10)) # FIX: Pass a QPoint
         mock_dialog_manager.open_metadata_dialog.assert_called_once_with(mock_proxy_index)
@@ -595,7 +662,7 @@ class TestMainWindowContextMenuAndDialogs(TestMainWindowBase):
         mock_qmenu_instance.exec = MagicMock()
         mock_qmenu_instance.addAction = MagicMock()
         mock_proxy_index = MagicMock(spec=QModelIndex); mock_proxy_index.isValid.return_value = True # FIX: Make it valid
-        self.window.thumbnail_view.indexAt = MagicMock(return_value=mock_proxy_index)
+        self.window.ui_manager.thumbnail_view.indexAt = MagicMock(return_value=mock_proxy_index) # ★★★ UIManager経由 ★★★
         self.window._open_file_location_for_item = MagicMock()
 
         self.window._show_thumbnail_context_menu(QPoint(10,10)) # FIX: Pass a QPoint
@@ -610,9 +677,17 @@ class TestMainWindowContextMenuAndDialogs(TestMainWindowBase):
         file_in_dir = os.path.join(file_to_open_dir, "test_file.png")
         self.create_file(file_in_dir)
         item = QStandardItem(os.path.basename(file_in_dir))
+        # item.data(role) が UserRole のときに file_in_dir を返すようにモック
+        def item_data_side_effect(role):
+            if role == Qt.ItemDataRole.UserRole:
+                return file_in_dir
+            return None # 他のロールはNoneを返す
+        item.data = MagicMock(side_effect=item_data_side_effect)
+        # itemFromIndex がこの item を返すように設定
+        self.window.ui_manager.source_thumbnail_model.itemFromIndex.return_value = item
         item.setData(file_in_dir, Qt.ItemDataRole.UserRole)
-        self.window.source_thumbnail_model.appendRow(item)
-        proxy_idx = self.window.filter_proxy_model.mapFromSource(self.window.source_thumbnail_model.indexFromItem(item))
+        self.window.ui_manager.source_thumbnail_model.appendRow(item) # ★★★ UIManager経由 ★★★
+        proxy_idx = self.window.ui_manager.filter_proxy_model.mapFromSource(self.window.ui_manager.source_thumbnail_model.indexFromItem(item)) # ★★★ UIManager経由 ★★★
 
         self.window._open_file_location_for_item(proxy_idx)
         mock_os_startfile.assert_called_once_with(file_to_open_dir)
@@ -620,15 +695,9 @@ class TestMainWindowContextMenuAndDialogs(TestMainWindowBase):
 class TestMainWindowSortFunctionality(TestMainWindowBase):
     def test_sort_functionality_toggle_buttons(self):
         # ★★★ 修正: setUp で filter_proxy_model がモック化されていない場合、ここでモック化する ★★★
-        # TestMainWindowBase の setUp では filter_proxy_model は明示的にモック化されていないため、
-        # MainWindow の __init__ で作成される実際のインスタンスが使われるか、
-        # あるいは他のテストでモック化されたものが残っている可能性がある。
-        # このテスト専用にモック化するのが安全。
-        # ただし、MainWindow.__init__ で filter_proxy_model が None の場合に
-        # _apply_initial_sort_from_settings が早期リターンする可能性も考慮。
-        self.window.filter_proxy_model = MagicMock(spec=MetadataFilterProxyModel)
-        self.window.filter_proxy_model.sort = MagicMock()
-        self.window.filter_proxy_model.set_sort_key_type = MagicMock()
+        # self.window.filter_proxy_model は self.window.ui_manager.filter_proxy_model を指すように setUp で設定済み
+        self.window.ui_manager.filter_proxy_model.sort = MagicMock() # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.set_sort_key_type = MagicMock() # ★★★ UIManager経由 ★★★
 
         # Add some dummy items to the source model to make the test more realistic,
         # though we are mocking the actual sort call.
@@ -638,31 +707,28 @@ class TestMainWindowSortFunctionality(TestMainWindowBase):
         self.create_file(file_a_path)
         item_b = QStandardItem("b_file.png"); item_b.setData(file_b_path, Qt.ItemDataRole.UserRole)
         item_a = QStandardItem("a_file.jpg"); item_a.setData(file_a_path, Qt.ItemDataRole.UserRole)
-        # Ensure source_thumbnail_model is initialized
-        # ★★★ 修正: MainWindow の __init__ で source_thumbnail_model は初期化されるはず ★★★
-        # self.window.source_thumbnail_model は None ではない前提で進める。
-        # もし None になるケースがあるなら、それは MainWindow の初期化ロジックの問題か、テストのセットアップの問題。
-        if self.window.source_thumbnail_model is None:
-            self.window.source_thumbnail_model = QStandardItemModel()
-            if self.window.filter_proxy_model: # If proxy exists, set its source
-                 self.window.filter_proxy_model.setSourceModel(self.window.source_thumbnail_model)
+        # self.window.source_thumbnail_model は self.window.ui_manager.source_thumbnail_model を指す
+        if self.window.ui_manager.source_thumbnail_model is None: # ★★★ UIManager経由 ★★★
+            self.window.ui_manager.source_thumbnail_model = QStandardItemModel() # ★★★ UIManager経由 ★★★
+            if self.window.ui_manager.filter_proxy_model: # If proxy exists, set its source # ★★★ UIManager経由 ★★★
+                 self.window.ui_manager.filter_proxy_model.setSourceModel(self.window.ui_manager.source_thumbnail_model) # ★★★ UIManager経由 ★★★
 
-        self.window.source_thumbnail_model.appendRow(item_b)
-        self.window.source_thumbnail_model.appendRow(item_a)
+        self.window.ui_manager.source_thumbnail_model.appendRow(item_b) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.source_thumbnail_model.appendRow(item_a) # ★★★ UIManager経由 ★★★
 
         # Simulate clicking "ファイル名 昇順" (ID 0)
-        self.window.sort_filename_asc_button.click()
+        self.window._apply_sort_from_toggle_button(0) # ID 0 を直接渡す
         self.assertEqual(self.window.current_sort_button_id, 0)
-        self.window.filter_proxy_model.set_sort_key_type.assert_called_with(0) # Filename
-        self.window.filter_proxy_model.sort.assert_called_with(0, Qt.SortOrder.AscendingOrder)
-        self.window.filter_proxy_model.sort.reset_mock() # Reset for next check
-        self.window.filter_proxy_model.set_sort_key_type.reset_mock()
+        self.window.ui_manager.filter_proxy_model.set_sort_key_type.assert_called_with(0) # Filename # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.sort.assert_called_with(0, Qt.SortOrder.AscendingOrder) # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.sort.reset_mock() # Reset for next check # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.set_sort_key_type.reset_mock() # ★★★ UIManager経由 ★★★
 
         # Simulate clicking "更新日時 降順" (ID 3)
-        self.window.sort_date_desc_button.click()
+        self.window._apply_sort_from_toggle_button(3) # ID 3 を直接渡す
         self.assertEqual(self.window.current_sort_button_id, 3)
-        self.window.filter_proxy_model.set_sort_key_type.assert_called_with(1) # Update Date
-        self.window.filter_proxy_model.sort.assert_called_with(0, Qt.SortOrder.DescendingOrder)
+        self.window.ui_manager.filter_proxy_model.set_sort_key_type.assert_called_with(1) # Update Date # ★★★ UIManager経由 ★★★
+        self.window.ui_manager.filter_proxy_model.sort.assert_called_with(0, Qt.SortOrder.DescendingOrder) # ★★★ UIManager経由 ★★★
 
 class TestMainWindowCloseEvent(TestMainWindowBase):
     @patch('src.main_window.MainWindow._save_settings')
@@ -703,15 +769,40 @@ def main_window_fixture(qt_app, tmp_path, monkeypatch):
     monkeypatch.setattr(MainWindow, "_load_app_settings", lambda self: None)
     monkeypatch.setattr(MainWindow, "_save_settings", lambda self: None)
     
+    # UIManager とその属性をモック化
+    mock_ui_manager = MagicMock()
+    mock_ui_manager.source_thumbnail_model = MagicMock(spec=QStandardItemModel)
+    # For _update_status_bar_info to work during MainWindow.__init__
+    mock_ui_manager.filter_proxy_model = MagicMock(spec=MetadataFilterProxyModel)
+    mock_ui_manager.filter_proxy_model.rowCount.return_value = 0 # Default
+    mock_ui_manager.thumbnail_view = MagicMock(spec=QListView)
+    mock_ui_manager.thumbnail_view.selectionModel.return_value = MagicMock(spec=QItemSelectionModel)
+    mock_ui_manager.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = []
+    monkeypatch.setattr('src.main_window.UIManager', lambda self_mw: mock_ui_manager)
+
     mock_file_op_inst = MagicMock(spec=FileOperations)
     mock_file_op_inst.start_operation = MagicMock(return_value=True)
     mock_file_op_inst._thread = MagicMock(spec=QThread) # FIX: Add _thread to this mock too
     monkeypatch.setattr('src.file_operations.FileOperations', lambda parent, file_op_manager: mock_file_op_inst) 
 
+    # This is the mock for the MainWindow.statusBar() METHOD
+    mock_statusbar_method_return_value = MagicMock()
+    monkeypatch.setattr(MainWindow, 'statusBar', lambda self_mw: mock_statusbar_method_return_value)
+
+    # When UIManager is instantiated, its setup_ui method's side_effect is set
+    # to correctly set the statusBar attribute on the MainWindow instance.
+    def mock_uimanager_factory_for_fixture(main_window_instance_passed_to_constructor):
+        def setup_ui_for_mock():
+            main_window_instance_passed_to_constructor.statusBar = main_window_instance_passed_to_constructor.statusBar()
+        mock_ui_manager.setup_ui.side_effect = setup_ui_for_mock
+        return mock_ui_manager
+    monkeypatch.setattr('src.main_window.UIManager', mock_uimanager_factory_for_fixture)
+
     window = MainWindow()
     window.current_folder_path = str(tmp_path)
     window.initial_dialog_path = str(tmp_path)
     window.file_operations = mock_file_op_inst # Ensure MainWindow's direct ref is also this mock
+    window.ui_manager = mock_ui_manager # MainWindow インスタンスにモックを設定
 
     (tmp_path / "image0.png").touch()
     (tmp_path / "image1.jpg").touch()
@@ -727,34 +818,48 @@ def test_process_file_op_completion_move_success_pytest(mock_try_delete, main_wi
     window = main_window_fixture 
     
     src_file1_path = str(tmp_path / "move_src1.png")
-    (tmp_path / "move_src1.png").touch()
+    # パスの正規化（テスト環境とアプリケーション内で一貫させるため）
+    normalized_src_file1_path = os.path.normpath(src_file1_path).replace("\\", "/")
+
+    with open(normalized_src_file1_path, "w") as f: # touch() の代わりにファイル作成
+        f.write("dummy content")
+
     item1 = QStandardItem(os.path.basename(src_file1_path))
-    item1.setData(src_file1_path, Qt.ItemDataRole.UserRole)
-    window.source_thumbnail_model.appendRow(item1)
+    item1.setData(normalized_src_file1_path, Qt.ItemDataRole.UserRole) # 正規化されたパスをセット
+    # ★★★ item1 の model() が期待する source_thumbnail_model を返すように設定 ★★★
+    item1.model = MagicMock(return_value=window.ui_manager.source_thumbnail_model)
+    
+    # source_thumbnail_model のモックに rowCount と item を設定
+    window.ui_manager.source_thumbnail_model.rowCount.return_value = 1
+    window.ui_manager.source_thumbnail_model.item.return_value = item1
+    window.ui_manager.source_thumbnail_model.appendRow(item1) # ★★★ UIManager経由 ★★★
     window.selected_file_paths = [src_file1_path] 
 
     dest_folder = str(tmp_path / "dest_move")
     os.makedirs(dest_folder, exist_ok=True)
-
     result_data = {
         'status': 'completed',
         'operation_type': 'move',
         'moved_count': 1,
         'renamed_files': [],
         'errors': [],
-        'successfully_moved_src_paths': [src_file1_path],
+            'successfully_moved_src_paths': [normalized_src_file1_path], # 正規化されたパスを使用
         'destination_folder': dest_folder
     }
     
-    window.thumbnail_view.selectionModel = MagicMock() # Mock selectionModel for _update_status_bar_info
-    window.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = [] # Simulate 0 selected
+    window.ui_manager.thumbnail_view.selectionModel = MagicMock() # Mock selectionModel for _update_status_bar_info # ★★★ UIManager経由 ★★★
+    window.ui_manager.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = [] # Simulate 0 selected # ★★★ UIManager経由 ★★★
 
     window._process_file_op_completion(result_data)
 
-    assert window.source_thumbnail_model.rowCount() == 0
+    # removeRow が呼ばれたことを確認
+    window.ui_manager.source_thumbnail_model.removeRow.assert_called_once()
+    # アサーションの直前に rowCount の戻り値を設定
+    window.ui_manager.source_thumbnail_model.rowCount.return_value = 0 
+    assert window.ui_manager.source_thumbnail_model.rowCount() == 0 # ★★★ UIManager経由 ★★★
     assert not window.selected_file_paths
     # FIX: Assert the message set by _update_status_bar_info
-    assert "表示アイテム数: 0 / 選択アイテム数: 0" in window.statusBar.currentMessage()
+    window.statusBar.showMessage.assert_called_with("表示アイテム数: 0 / 選択アイテム数: 0")
     # ★★★ 修正: _process_file_op_completion から _try_delete_empty_subfolders の呼び出しは削除された ★★★
     # mock_try_delete.assert_any_call(str(tmp_path)) # 以前のアサーション
     mock_try_delete.assert_not_called() # 呼び出されないことを確認

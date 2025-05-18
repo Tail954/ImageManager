@@ -100,8 +100,8 @@ class DialogManager:
     def open_full_image_dialog(self, proxy_index):
         """サムネイルのダブルクリックに応じてFullImageDialogを開くまたは更新する。"""
         if not proxy_index.isValid(): return
-        source_index = self.main_window.filter_proxy_model.mapToSource(proxy_index)
-        item = self.main_window.source_thumbnail_model.itemFromIndex(source_index)
+        source_index = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_index) # ★★★ UIManager経由 ★★★
+        item = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_index) # ★★★ UIManager経由 ★★★
         if not item: return
         file_path = item.data(Qt.ItemDataRole.UserRole)
         if not file_path: return
@@ -109,10 +109,10 @@ class DialogManager:
         logger.info(f"FullImageDialog表示要求: {file_path}")
 
         visible_image_paths = []
-        for row in range(self.main_window.filter_proxy_model.rowCount()):
-            proxy_idx_loop = self.main_window.filter_proxy_model.index(row, 0)
-            source_idx_loop = self.main_window.filter_proxy_model.mapToSource(proxy_idx_loop)
-            item_loop = self.main_window.source_thumbnail_model.itemFromIndex(source_idx_loop)
+        for row in range(self.main_window.ui_manager.filter_proxy_model.rowCount()): # ★★★ UIManager経由 ★★★
+            proxy_idx_loop = self.main_window.ui_manager.filter_proxy_model.index(row, 0) # ★★★ UIManager経由 ★★★
+            source_idx_loop = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_idx_loop) # ★★★ UIManager経由 ★★★
+            item_loop = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_idx_loop) # ★★★ UIManager経由 ★★★
             if item_loop:
                 visible_image_paths.append(item_loop.data(Qt.ItemDataRole.UserRole))
 
@@ -157,8 +157,8 @@ class DialogManager:
         if not proxy_index.isValid():
             logger.debug("open_metadata_dialog: 無効なプロキシインデックスを受け取りました。")
             return
-        source_index = self.main_window.filter_proxy_model.mapToSource(proxy_index)
-        item = self.main_window.source_thumbnail_model.itemFromIndex(source_index)
+        source_index = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_index) # ★★★ UIManager経由 ★★★
+        item = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_index) # ★★★ UIManager経由 ★★★
         if not item:
             logger.debug(f"open_metadata_dialog: ソースインデックス {source_index.row()},{source_index.column()} からアイテムを取得できませんでした。")
             return
@@ -255,20 +255,20 @@ class DialogManager:
     def open_wc_creator_dialog(self):
         """ワイルドカード作成ダイアログを開く。"""
         logger.info("ワイルドカード作成ツールを起動します。")
-
-        selected_proxy_indexes = self.main_window.thumbnail_view.selectionModel().selectedIndexes()
+        # thumbnail_view は UIManager が持つ
+        selected_proxy_indexes = self.main_window.ui_manager.thumbnail_view.selectionModel().selectedIndexes()
         if not selected_proxy_indexes:
             QMessageBox.information(self.main_window, "情報", "作成対象の画像をサムネイル一覧から選択してください。")
             return
 
         selected_files_for_wc = []
         metadata_for_wc = []
-        processed_paths = set()
-
+        processed_paths = set() # 選択されたアイテムの重複処理を避ける
+        
         for proxy_idx in selected_proxy_indexes:
             if proxy_idx.column() == 0:
-                source_idx = self.main_window.filter_proxy_model.mapToSource(proxy_idx)
-                item = self.main_window.source_thumbnail_model.itemFromIndex(source_idx)
+                source_idx = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_idx) # ★★★ UIManager経由 ★★★
+                item = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_idx) # ★★★ UIManager経由 ★★★
                 if item:
                     file_path = item.data(Qt.ItemDataRole.UserRole)
                     if file_path and file_path not in processed_paths:
