@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
      QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox, QStyledItemDelegate
 )
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection # <--- ★QDirIterator, QModelIndex, QItemSelection をインポート
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray # <--- ★QWIDGETSIZE_MAX のインポートを削除
 import os # For path operations
 from pathlib import Path # For path operations
 import json # For settings / metadata parsing
@@ -47,7 +47,8 @@ from .constants import (
     METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
     THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, 
     DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
-    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT
+    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
+    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ★★★ ジオメトリ定数をインポート ★★★
 )
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class MainWindow(QMainWindow):
         self.is_copy_mode = False # Flag for copy mode state, True if copy mode is active
         self.copy_selection_order = [] # Stores QStandardItem references in copy mode selection order        
         self._hidden_moved_file_paths = set() # Set to store paths of files moved out of the current view
-        self.initial_dialog_path = None # For storing path from settings
+        self.initial_folder_dialog_path = None # For storing path from settings
         self.metadata_dialog_last_geometry = None # DialogManagerがMainWindowのこの属性を参照・更新する
         # self.full_image_dialog_instance = None # DialogManagerが管理する
         self.image_preview_mode = PREVIEW_MODE_FIT # Default, will be overwritten by _load_app_settings
@@ -103,6 +104,16 @@ class MainWindow(QMainWindow):
 
         # --- ★★★ UIセットアップをUIManagerに委譲 ★★★ ---
         self.ui_manager.setup_ui()
+
+        # 設定からウィンドウジオメトリを復元 (UIセットアップ後、show()の前が望ましい)
+        if self.app_settings.get(MAIN_WINDOW_GEOMETRY):
+            geom_byte_array = QByteArray.fromBase64(self.app_settings[MAIN_WINDOW_GEOMETRY].encode('utf-8'))
+            self.restoreGeometry(geom_byte_array)
+
+        # スプリッターのシグナルを接続 (UIセットアップ後)
+        if self.ui_manager.splitter: # UIManager で splitter が self.splitter として保持されている前提
+            self.ui_manager.splitter.splitterMoved.connect(self.handle_splitter_moved)
+            logger.debug("Splitter signal connected for dynamic left panel width.")
 
         # self._load_settings() # Load UI specific settings after all UI elements are initialized <=self._load_app_settings()に統合
         self._apply_initial_sort_from_settings() # Apply initial sort based on loaded or default settings
@@ -193,6 +204,14 @@ class MainWindow(QMainWindow):
         self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled # ★★★ 追加 ★★★
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
 
+        # ★★★ ウィンドウジオメトリの保存 ★★★
+        self.app_settings[MAIN_WINDOW_GEOMETRY] = self.saveGeometry().toBase64().data().decode('utf-8')
+        if self.metadata_dialog_last_geometry and isinstance(self.metadata_dialog_last_geometry, QByteArray):
+            self.app_settings[METADATA_DIALOG_GEOMETRY] = self.metadata_dialog_last_geometry.toBase64().data().decode('utf-8')
+        elif METADATA_DIALOG_GEOMETRY in self.app_settings: # 以前の値があるが、現在は無効なら削除
+            del self.app_settings[METADATA_DIALOG_GEOMETRY]
+
+
         self._write_app_settings_file(self.app_settings)
 
     def _read_app_settings_file(self):
@@ -218,7 +237,13 @@ class MainWindow(QMainWindow):
                 "recursive_search": self.recursive_search_enabled,
                 # "sort_criteria_index": self.current_sort_criteria_index, # 廃止
                 "sort_button_id": self.current_sort_button_id, # 新しいトグルボタンUI用
+                MAIN_WINDOW_GEOMETRY: self.saveGeometry().toBase64().data().decode('utf-8'),
             }
+            if self.metadata_dialog_last_geometry and isinstance(self.metadata_dialog_last_geometry, QByteArray):
+                settings_dict[METADATA_DIALOG_GEOMETRY] = self.metadata_dialog_last_geometry.toBase64().data().decode('utf-8')
+            elif METADATA_DIALOG_GEOMETRY in settings_dict:
+                del settings_dict[METADATA_DIALOG_GEOMETRY]
+
         try:
             with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(settings_dict, f, indent=4)
@@ -254,8 +279,8 @@ class MainWindow(QMainWindow):
         # 最終フォルダパス
         if lp_val := self.app_settings.get("last_folder_path"):
             if os.path.isdir(lp_val):
-                self.initial_dialog_path = lp_val
-                logger.info(f"前回終了時のフォルダパスを読み込みました: {self.initial_dialog_path}")
+                self.initial_folder_dialog_path = lp_val
+                logger.info(f"前回終了時のフォルダパスを読み込みました: {self.initial_folder_dialog_path}")
             else:
                 logger.warning(f"保存されたフォルダパスが無効または見つかりません: {lp_val}")
 
@@ -281,13 +306,23 @@ class MainWindow(QMainWindow):
         self.delete_empty_folders_enabled = self.app_settings.get(DELETE_EMPTY_FOLDERS_ENABLED, True)
         logger.info(f"空フォルダ削除設定を読み込みました: {'有効' if self.delete_empty_folders_enabled else '無効'}")
 
+        # ★★★ ウィンドウジオメトリの読み込み (適用は __init__ の最後で行う) ★★★
+        if main_geom_str := self.app_settings.get(MAIN_WINDOW_GEOMETRY):
+            # self.restoreGeometry(QByteArray.fromBase64(main_geom_str.encode('utf-8'))) # ここでは適用しない
+            logger.info(f"メインウィンドウのジオメトリを読み込みました。")
+        if meta_geom_str := self.app_settings.get(METADATA_DIALOG_GEOMETRY):
+            self.metadata_dialog_last_geometry = QByteArray.fromBase64(meta_geom_str.encode('utf-8'))
+            logger.info(f"メタデータダイアログのジオメトリを読み込みました。")
+
+
     def select_folder(self):
         start_dir = ""
         if self.current_folder_path and os.path.isdir(self.current_folder_path):
             start_dir = self.current_folder_path
-        elif self.initial_dialog_path and os.path.isdir(self.initial_dialog_path):
-            start_dir = self.initial_dialog_path
+        elif self.initial_folder_dialog_path and os.path.isdir(self.initial_folder_dialog_path):
+            start_dir = self.initial_folder_dialog_path
         folder_path = QFileDialog.getExistingDirectory(self, "画像フォルダを選択", start_dir)
+
         if folder_path:
             logger.info(f"選択されたフォルダ: {folder_path}")
             # ★★★ 設定に基づいて空フォルダ削除処理を実行 ★★★
@@ -897,15 +932,30 @@ class MainWindow(QMainWindow):
         logger.info("アプリケーションを終了します。")
         super().closeEvent(event)
 
-    def resizeEvent(self, event: QCloseEvent): # QResizeEvent の方が適切
-        """ウィンドウリサイズ時に左パネルのオーバーレイウィジェットのサイズを調整する。"""
+    def resizeEvent(self, event: QCloseEvent): # QResizeEvent の方が適切ですが、既存の型ヒントを維持します
+        """ウィンドウリサイズ時に左パネルのオーバーレイウィジェットのサイズを調整し、
+        左パネルの最大幅を固定値に設定する。
+        """
         super().resizeEvent(event)
+
+        # --- 左パネルの最大幅をウィンドウリサイズ時に350pxに設定 ---
+        if self.ui_manager.left_panel_widget_ref:
+            self.ui_manager.left_panel_widget_ref.setMaximumWidth(350)
+            # logger.debug("Window resized, left panel max width set to 350.") # 頻繁に出力されるためコメントアウト
+
         # 左パネルのオーバーレイウィジェットが有効（表示中）であれば、
         # 左パネルの現在のサイズに合わせてオーバーレイのサイズも更新する
         if hasattr(self.ui_manager, 'left_panel_overlay_widget') and \
            self.ui_manager.left_panel_overlay_widget and self.ui_manager.left_panel_widget_ref and \
            self.ui_manager.left_panel_overlay_widget.isVisible():
             self.ui_manager.left_panel_overlay_widget.setGeometry(self.ui_manager.left_panel_widget_ref.rect())
+
+    def handle_splitter_moved(self, pos: int, index: int):
+        """スプリッターがユーザーによってドラッグされたときに呼び出され、左パネルの最大幅制限を解除する。"""
+        if self.ui_manager.left_panel_widget_ref:
+            # QWIDGETSIZE_MAX の代わりに大きな整数値を設定
+            self.ui_manager.left_panel_widget_ref.setMaximumWidth(16777215) # 実質無制限
+            logger.debug(f"Splitter moved by user. Left panel max width unrestricted. Pos: {pos}, Index: {index}")
 
     def _show_thumbnail_context_menu(self, pos):
         proxy_index = self.ui_manager.thumbnail_view.indexAt(pos) # ★★★ UIManager経由 ★★★

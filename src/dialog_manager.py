@@ -1,7 +1,7 @@
 # src/dialog_manager.py
 import logging
 import os
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QByteArray
 from PyQt6.QtWidgets import QMessageBox, QApplication, QDialog
 
 from .settings_dialog import SettingsDialog
@@ -10,7 +10,8 @@ from .image_metadata_dialog import ImageMetadataDialog
 from .wc_creator_dialog import WCCreatorDialog
 from .drop_window import DropWindow
 from .constants import (
-    APP_SETTINGS_FILE, THUMBNAIL_RIGHT_CLICK_ACTION,
+    APP_SETTINGS_FILE,
+    THUMBNAIL_RIGHT_CLICK_ACTION,
     WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
     Qt as ConstantsQt # Renamed Qt from constants to avoid clash
 )
@@ -189,12 +190,15 @@ class DialogManager:
             self.metadata_dialog_instance = ImageMetadataDialog(metadata_dict, self.main_window, item_file_path_for_debug)
             self.metadata_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self.metadata_dialog_instance.finished.connect(self._on_metadata_dialog_finished)
-            if self.main_window.metadata_dialog_last_geometry:
-                 try:
-                     screen_rect = QApplication.primaryScreen().availableGeometry()
-                     if screen_rect.intersects(self.main_window.metadata_dialog_last_geometry):
-                         self.metadata_dialog_instance.setGeometry(self.main_window.metadata_dialog_last_geometry)
-                 except Exception: logger.warning("スクリーンジオメトリを取得できませんでした。最後のダイアログジオメトリをチェックなしで復元します。")
+            if self.main_window.metadata_dialog_last_geometry and isinstance(self.main_window.metadata_dialog_last_geometry, QByteArray):
+                try:
+                    # QByteArrayからQRectに変換して、画面内に収まるかチェックする方がより安全だが、
+                    # restoreGeometryは通常、無効なジオメトリをある程度ハンドルする。
+                    # ここでは直接restoreGeometryを試みる。
+                    self.metadata_dialog_instance.restoreGeometry(self.main_window.metadata_dialog_last_geometry)
+                    logger.debug(f"メタデータダイアログのジオメトリを復元しました。")
+                except Exception as e:
+                    logger.warning(f"メタデータダイアログのジオメトリ復元中にエラー: {e}。デフォルト位置で表示します。")
             self.metadata_dialog_instance.show()
         else:
             self.metadata_dialog_instance.update_metadata(metadata_dict, item_file_path_for_debug)
@@ -207,10 +211,9 @@ class DialogManager:
         # self.sender()ではなく、インスタンス変数を直接比較・クリアする
         if self.metadata_dialog_instance: # インスタンスが存在する場合のみ
              # sender_dialog = self.main_window.sender() # これは不要
-             # if sender_dialog == self.metadata_dialog_instance: # これも不要
             if isinstance(self.metadata_dialog_instance, QDialog): # 型チェックは念のため
-                 self.main_window.metadata_dialog_last_geometry = self.metadata_dialog_instance.geometry()
-                 logger.debug(f"メタデータダイアログが閉じられました。ジオメトリを保存しました: {self.main_window.metadata_dialog_last_geometry}")
+                self.main_window.metadata_dialog_last_geometry = self.metadata_dialog_instance.saveGeometry()
+                logger.debug(f"メタデータダイアログが閉じられました。ジオメトリ(QByteArray)を保存しました。")
             self.metadata_dialog_instance = None
 
 

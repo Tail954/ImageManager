@@ -22,6 +22,9 @@ WC_FORMAT_HASH_COMMENT = "separate_lines" # # コメント (従来の形式)
 WC_FORMAT_BRACKET_COMMENT = "bracket_100" # [コメント:100] (新しい形式の例)
 # --- ★★★ 追加: 空フォルダ削除設定 ★★★ ---
 DELETE_EMPTY_FOLDERS_ENABLED = "delete_empty_folders_enabled"
+# --- ★★★ 追加: ウィンドウジオメトリ設定 ★★★ ---
+MAIN_WINDOW_GEOMETRY = "main_window_geometry"
+METADATA_DIALOG_GEOMETRY = "metadata_dialog_geometry"
 
 # --- ★★★ 追加終わり ★★★ ---
 

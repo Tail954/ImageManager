@@ -47,6 +47,7 @@ class UIManager:
         self.filter_proxy_model = None
         self.left_panel_widget_ref = None # 左パネルへの参照を保持
         self.left_panel_overlay_widget = None # 左パネル専用オーバーレイ
+        self.splitter = None # スプリッターへの参照を追加
 
     def setup_ui(self):
         # Menu Bar (MainWindow側で _create_menu_bar を呼び出す)
@@ -63,11 +64,14 @@ class UIManager:
         main_layout = QHBoxLayout(central_widget)
 
         # Splitter for resizable panels
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal) # self.splitter に代入
 
         # Left panel (参照を保持)
         self.left_panel_widget_ref = self._create_left_panel()
-        splitter.addWidget(self.left_panel_widget_ref)
+        # --- ★ 左パネルの最大幅を設定 ---
+        # この値はUIの見た目に応じて調整してください
+        self.left_panel_widget_ref.setMaximumWidth(350) 
+        self.splitter.addWidget(self.left_panel_widget_ref)
 
         # 左パネル用オーバーレイウィジェットの作成
         self.left_panel_overlay_widget = QWidget(self.left_panel_widget_ref) # 親を左パネルに
@@ -78,10 +82,10 @@ class UIManager:
 
         # Right panel (Thumbnail view)
         right_panel = self._create_right_panel()
-        splitter.addWidget(right_panel)
+        self.splitter.addWidget(right_panel)
 
-        splitter.setSizes([300, 900])
-        main_layout.addWidget(splitter)
+        self.splitter.setSizes([300, 900]) # 初期サイズ
+        main_layout.addWidget(self.splitter)
 
     def _create_left_panel(self):
         left_panel = QWidget()
