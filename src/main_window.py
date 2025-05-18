@@ -77,8 +77,6 @@ class MainWindow(QMainWindow):
         self.is_copy_mode = False # Flag for copy mode state, True if copy mode is active
         self.copy_selection_order = [] # Stores QStandardItem references in copy mode selection order        
         self._hidden_moved_file_paths = set() # Set to store paths of files moved out of the current view
-        # self.progress_dialog = None # Moved to FileOperationManager
-        self.progress_dialog = None # For cancellation dialog
         self.initial_dialog_path = None # For storing path from settings
         self.metadata_dialog_last_geometry = None # DialogManagerがMainWindowのこの属性を参照・更新する
         # self.full_image_dialog_instance = None # DialogManagerが管理する
@@ -373,27 +371,6 @@ class MainWindow(QMainWindow):
                     selection_model.selectionChanged.connect(self.handle_thumbnail_selection_changed)
                 self.deselect_all_thumbnails() # ビューの選択もクリア
             # ★★★ コピーモードクリア処理ここまで ★★★
-
-            if self.thumbnail_loader_thread and self.thumbnail_loader_thread.isRunning():
-                logger.info("既存のサムネイル読み込みスレッドを停止します...")
-                # シグナル接続を解除
-                try:
-                    self.thumbnail_loader_thread.thumbnailLoaded.disconnect(self.update_thumbnail_item)
-                    self.thumbnail_loader_thread.progressUpdated.disconnect(self.update_progress_bar)
-                    self.thumbnail_loader_thread.finished.disconnect(self.on_thumbnail_loading_finished)
-                    logger.debug("既存スレッドのシグナル接続を解除しました。")
-                except TypeError: # disconnect中にエラーが発生することがある (既に接続されていない場合など)
-                    logger.debug("既存スレッドのシグナル接続解除中にエラー発生、または既に解除済み。")
-                except Exception as e:
-                    logger.error(f"既存スレッドのシグナル接続解除中に予期せぬエラー: {e}", exc_info=True)
-
-                self.thumbnail_loader_thread.stop() # スレッドに停止を要求
-                if not self.thumbnail_loader_thread.wait(7000): # タイムアウトを少し長めに設定
-                    logger.warning("既存スレッドの終了待機がタイムアウトしました。")
-                else:
-                    logger.info("既存スレッドが正常に終了しました。")
-                self.thumbnail_loader_thread.deleteLater() # Qtのイベントループで安全に削除
-                self.thumbnail_loader_thread = None # 参照をクリア
 
             search_flags = QDirIterator.IteratorFlag.Subdirectories if self.recursive_search_enabled else QDirIterator.IteratorFlag.NoIteratorFlags
             iterator = QDirIterator(folder_path,
