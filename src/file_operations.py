@@ -73,9 +73,9 @@ class FileOperationsWorker(QObject):
                 moved_count += 1
                 successfully_moved_src_paths.append(src_path) # Add to successful list
                 new_basename = os.path.basename(actual_dest_path)
-                if new_basename != original_basename:
+                if new_basename != original_basename: # Renamed_files_info is used to show a dialog
                     renamed_files_info.append({'original': original_basename, 'new': new_basename})
-                logger.info(f"Moved: {src_path} -> {actual_dest_path}")
+                # logger.info(f"Moved: {src_path} -> {actual_dest_path}") # コメントアウト
             except Exception as e:
                 error_msg = f"Error moving {original_basename}: {e}"
                 logger.error(error_msg, exc_info=True)
@@ -160,7 +160,7 @@ class FileOperationsWorker(QObject):
             try:
                 shutil.copy2(src_path, actual_dest_path) # copy2 preserves metadata
                 copied_count += 1
-                logger.info(f"Copied: {src_path} -> {actual_dest_path} (UI order: {selection_num})")
+                # logger.info(f"Copied: {src_path} -> {actual_dest_path} (UI order: {selection_num})") # コメントアウト
                 next_copy_number += 1 # Increment for the next file
             except Exception as e:
                 error_msg = f"Error copying {original_basename}: {e}"

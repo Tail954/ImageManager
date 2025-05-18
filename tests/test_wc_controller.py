@@ -36,17 +36,20 @@ class TestWCController(unittest.TestCase):
 
     def test_load_invalid_image_path(self):
         """無効な画像パスを渡した場合のテスト"""
-        with patch('PyQt6.QtGui.QImage') as mock_qimage:
-            mock_qimage.return_value.isNull.return_value = True
+        # Patch QImage where it's used in wc_controller
+        with patch('src.wc_controller.QImage') as MockQImageClass:
+            mock_qimage_instance = MockQImageClass.return_value
+            mock_qimage_instance.load.return_value = False # Simulate load failure
+            mock_qimage_instance.isNull.return_value = True
             result = self.controller.load_image_data('invalid_path')
             self.assertFalse(result)
-            mock_qimage.assert_called_with('invalid_path')
+            mock_qimage_instance.load.assert_called_with('invalid_path')
 
     def test_empty_metadata_handling(self):
         """空のメタデータを渡した場合のテスト"""
         dialog = WCCreatorDialog([self.test_images[0]], [{}], WC_FORMAT_HASH_COMMENT)
         self.assertEqual(dialog.metadata_list, [{}])
-        self.assertEqual(dialog.prompt_line_edit.text(), "")
+        self.assertEqual(len(dialog.prompt_line_edits), 0) # Check if no prompt lines are created
 
     def test_large_image_loading(self):
         """大量の画像読み込みテスト"""
@@ -64,11 +67,13 @@ class TestWCController(unittest.TestCase):
             os.path.join(self.test_data_dir, 'images', 'test.bmp')
         ]
         for img in test_images:
-            with patch('PyQt6.QtGui.QImage') as mock_qimage:
-                mock_qimage.return_value.isNull.return_value = False
-                result = self.controller.load_image_data(img)
+            with patch('src.wc_controller.QImage') as MockQImageClass: # Patch QImage in wc_controller
+                mock_qimage_instance = MockQImageClass.return_value
+                mock_qimage_instance.load.return_value = True # Simulate successful load
+                mock_qimage_instance.isNull.return_value = False
+                result = self.controller.load_image_data(img) # Use img instead of img_path
                 self.assertTrue(result)
-                mock_qimage.assert_called_with(img)
+                mock_qimage_instance.load.assert_called_with(img) # Use img instead of img_path
 
     def test_threaded_ui_updates(self):
         """マルチスレッド環境でのUI更新テスト"""
@@ -78,10 +83,10 @@ class TestWCController(unittest.TestCase):
             def run(self):
                 self.update_signal.emit("test update")
 
-        dialog = WCCreatoryDialog([self.test_images[0]], [self.test_metadata[0]], WC_FORMAT_HASH_COMMENT)
+        # dialog = WCCreatorDialog([self.test_images[0]], [self.test_metadata[0]], WC_FORMAT_HASH_COMMENT) # Not needed for controller test
         worker = Worker()
         spy = QSignalSpy(worker.update_signal)
-        worker.update_signal.connect(dialog.update_status)
+        worker.update_signal.connect(self.controller.update_status) # Connect to controller's slot
         worker.start()
         worker.wait()
         self.assertEqual(len(spy), 1)

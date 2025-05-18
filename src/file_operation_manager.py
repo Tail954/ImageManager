@@ -69,14 +69,14 @@ class FileOperationManager:
     def _handle_copy_mode_toggled(self, checked):
         self.main_window.is_copy_mode = checked
         if checked:
-            self.main_window.copy_mode_button.setText("Copy Mode Exit")
+            self.main_window.copy_mode_button.setText("Copy Mode: ON")
             self.main_window.move_files_button.setEnabled(False)
             self.main_window.copy_files_button.setEnabled(True)
             self.main_window.deselect_all_thumbnails()
             self.main_window.copy_selection_order.clear()
             logger.info("Copy Mode Enabled.")
         else:
-            self.main_window.copy_mode_button.setText("Copy Mode")
+            self.main_window.copy_mode_button.setText("Copy Mode: OFF")
             self.main_window.move_files_button.setEnabled(True)
             self.main_window.copy_files_button.setEnabled(False)
             self.main_window.deselect_all_thumbnails()
@@ -125,6 +125,11 @@ class FileOperationManager:
     def _handle_file_op_finished(self, result):
         logger.info(f"File operation finished. Result: {result}")
         if self.progress_dialog:
+            try:
+                # プログレスダイアログを閉じる前に、canceledシグナルを切断
+                self.progress_dialog.canceled.disconnect(self.main_window.file_operations.stop_operation)
+            except TypeError:
+                logger.debug("Progress dialog canceled signal was not connected or already disconnected.")
             self.progress_dialog.close()
             self.progress_dialog = None
         self._set_file_op_buttons_enabled(True)

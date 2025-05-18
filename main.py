@@ -5,7 +5,7 @@ from src.main_window import MainWindow # Import MainWindow from the src package
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.INFO, # Changed to INFO to reduce log output
+        level=logging.INFO, # Revert to INFO
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr), # Log to console
