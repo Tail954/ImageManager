@@ -14,6 +14,11 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         self._negative_prompt_filter = ""
         self._generation_info_filter = ""
         self._search_mode = "AND"  # Default search mode
+        # --- ★ フィルタキーワードをキャッシュするためのメンバ変数を追加 ---
+        self._positive_keywords_cache = []
+        self._negative_keywords_cache = []
+        self._generation_keywords_cache = []
+        # --- ★ ここまで ---
         self._hidden_paths = set() # Set of file paths to hide
         self.setDynamicSortFilter(False) # ソートは明示的に sort() で行う
         # Filter on all columns by default, though we use custom data roles
@@ -74,27 +79,38 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
 
     def set_positive_prompt_filter(self, text):
         self._positive_prompt_filter = text.lower()
+        # --- ★ キーワードをキャッシュ ---
+        self._positive_keywords_cache = [kw.strip() for kw in self._positive_prompt_filter.split(',') if kw.strip()]
+        # --- ★ ここまで ---
         self.invalidateFilter() # Re-apply the filter
 
     def set_negative_prompt_filter(self, text):
         self._negative_prompt_filter = text.lower()
+        # --- ★ キーワードをキャッシュ ---
+        self._negative_keywords_cache = [kw.strip() for kw in self._negative_prompt_filter.split(',') if kw.strip()]
+        # --- ★ ここまで ---
         self.invalidateFilter()
 
     def set_generation_info_filter(self, text):
         self._generation_info_filter = text.lower()
+        # --- ★ キーワードをキャッシュ ---
+        self._generation_keywords_cache = [kw.strip() for kw in self._generation_info_filter.split(',') if kw.strip()]
+        # --- ★ ここまで ---
         self.invalidateFilter()
 
     def _keywords_match(self, text_to_search, filter_keywords):
         """Helper to check if keywords match text based on current search mode."""
+        # filter_keywords は既に小文字化され、リストになっている前提
         if not filter_keywords: # No keywords to filter by for this field
             return True
         
-        text_to_search_lower = text_to_search.lower()
+        # --- ★ text_to_search は呼び出し元で一度だけ小文字化する ---
+        # text_to_search_lower = text_to_search.lower() 
 
         if self._search_mode == "AND":
-            return all(keyword in text_to_search_lower for keyword in filter_keywords)
+            return all(keyword in text_to_search for keyword in filter_keywords) # text_to_search は既に小文字
         elif self._search_mode == "OR":
-            return any(keyword in text_to_search_lower for keyword in filter_keywords)
+            return any(keyword in text_to_search for keyword in filter_keywords) # text_to_search は既に小文字
         return False # Should not happen
 
     def filterAcceptsRow(self, source_row, source_parent):
@@ -138,12 +154,11 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
             # logger.debug(f"filterAcceptsRow: END - No metadata for row {source_row}. Returning {result}.")
             return result
 
-        # --- Prepare keywords for each filter field ---
-        # Split by comma, strip whitespace, and filter out empty strings
-        positive_keywords = [kw.strip() for kw in self._positive_prompt_filter.split(',') if kw.strip()]
-        negative_keywords = [kw.strip() for kw in self._negative_prompt_filter.split(',') if kw.strip()]
-        generation_keywords = [kw.strip() for kw in self._generation_info_filter.split(',') if kw.strip()]
-        # logger.debug(f"  filterAcceptsRow: Keywords for row {source_row} - P: {positive_keywords}, N: {negative_keywords}, G: {generation_keywords}")
+        # --- ★ メタデータからテキストを取得し、一度だけ小文字化 ---
+        positive_text_lower = metadata.get('positive_prompt', '').lower()
+        negative_text_lower = metadata.get('negative_prompt', '').lower()
+        generation_text_lower = metadata.get('generation_info', '').lower()
+        # --- ★ ここまで ---
 
         # --- Apply filters for each field ---
         # Each field must satisfy its own keyword search (AND/OR based on self._search_mode)
@@ -152,10 +167,11 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         # --- Apply filters for each field ---
         # The _keywords_match helper itself respects the AND/OR mode for keywords *within* a single field.
         # Now we need to combine the results from different fields based on the overall search mode.
-
-        positive_match_field = self._keywords_match(metadata.get('positive_prompt', ''), positive_keywords)
-        negative_match_field = self._keywords_match(metadata.get('negative_prompt', ''), negative_keywords)
-        generation_match_field = self._keywords_match(metadata.get('generation_info', ''), generation_keywords)
+        # --- ★ キャッシュされたキーワードと小文字化済みのテキストを使用 ---
+        positive_match_field = self._keywords_match(positive_text_lower, self._positive_keywords_cache)
+        negative_match_field = self._keywords_match(negative_text_lower, self._negative_keywords_cache)
+        generation_match_field = self._keywords_match(generation_text_lower, self._generation_keywords_cache)
+        # --- ★ ここまで ---
         # logger.debug(f"  filterAcceptsRow: Field matches for row {source_row} - P_match: {positive_match_field}, N_match: {negative_match_field}, G_match: {generation_match_field}")
 
         if self._search_mode == "AND":
@@ -171,9 +187,9 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
             # For OR mode, at least one active filter must be true.
             # A field is considered "active" for OR if its filter text is not empty.
             # If all filter texts are empty, then all items should pass (handled by _keywords_match returning True).
-            
+            # --- ★ キャッシュされたキーワードリストの空チェックに変更 ---
             # If all filter texts are empty, all _match_field will be True, so it returns True.
-            if not positive_keywords and not negative_keywords and not generation_keywords:
+            if not self._positive_keywords_cache and not self._negative_keywords_cache and not self._generation_keywords_cache:
                 # ソート問題用
                 #logger.info(f"  filterAcceptsRow (OR mode): No active keywords for row {source_row}. Returning True.")
                 #logger.info(f"filterAcceptsRow: END - OR mode (no active keywords) for row {source_row}. Returning True.")
@@ -181,11 +197,11 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
 
             # At least one filter text is active. Accept if any *active* field matches.
             accepted_by_or = False
-            if positive_keywords and positive_match_field:
+            if self._positive_keywords_cache and positive_match_field:
                 accepted_by_or = True
-            if negative_keywords and negative_match_field:
+            if self._negative_keywords_cache and negative_match_field:
                 accepted_by_or = True
-            if generation_keywords and generation_match_field:
+            if self._generation_keywords_cache and generation_match_field:
                 accepted_by_or = True
             # ソート問題用
             # logger.info(f"  filterAcceptsRow (OR mode): Initial accepted_by_or for row {source_row}: {accepted_by_or} (based on active fields matching)")
@@ -203,11 +219,11 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
 
             # Let's list the results of active filters
             active_filter_results = []
-            if positive_keywords:
+            if self._positive_keywords_cache:
                 active_filter_results.append(positive_match_field)
-            if negative_keywords:
+            if self._negative_keywords_cache:
                 active_filter_results.append(negative_match_field)
-            if generation_keywords:
+            if self._generation_keywords_cache:
                 active_filter_results.append(generation_match_field)
             # ソート問題用
             # logger.info(f"  filterAcceptsRow (OR mode): Active filter results list for row {source_row}: {active_filter_results}")

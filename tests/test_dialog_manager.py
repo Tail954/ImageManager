@@ -16,7 +16,8 @@ from src.wc_creator_dialog import WCCreatorDialog # To mock its methods
 from src.constants import (
     PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
     RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
-    WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
+    WC_FORMAT_HASH_COMMENT,
+    DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ インポート追加 ★★★
     THUMBNAIL_RIGHT_CLICK_ACTION, WC_COMMENT_OUTPUT_FORMAT, # For app_settings keys
     METADATA_ROLE, Qt as ConstantsQt # For item data roles
 )
@@ -36,20 +37,25 @@ class TestDialogManager(unittest.TestCase):
         self.mock_main_window.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA
         self.mock_main_window.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
         self.mock_main_window.is_loading_thumbnails = False
+        self.mock_main_window.delete_empty_folders_enabled = True # ★★★ 追加: MainWindowのモックに属性を追加 ★★★
         self.mock_main_window.app_settings = {} # Mock app_settings dictionary
         self.mock_main_window._write_app_settings_file = MagicMock()
         self.mock_main_window.apply_thumbnail_size_change = MagicMock(return_value=True)
-        # Mocks for FullImageDialog interaction
-        self.mock_main_window.filter_proxy_model = MagicMock()
-        self.mock_main_window.source_thumbnail_model = MagicMock()
+
+        # ★★★ UIManager のモックを追加 ★★★
+        self.mock_ui_manager = MagicMock()
+        self.mock_main_window.ui_manager = self.mock_ui_manager
+        # UIManager が持つモデルやビューをモック化
+        self.mock_ui_manager.filter_proxy_model = MagicMock()
+        self.mock_ui_manager.source_thumbnail_model = MagicMock()
+        self.mock_ui_manager.thumbnail_view = MagicMock()
+        self.mock_ui_manager.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = [] # Default to no selection
+
         # MainWindow's METADATA_ROLE is used by DialogManager, so ensure it's available
         self.mock_main_window.METADATA_ROLE = METADATA_ROLE
         # Mocks for ImageMetadataDialog interaction
         self.mock_main_window.metadata_cache = {}
         self.mock_main_window.metadata_dialog_last_geometry = None
-        # Mocks for WCCreatorDialog interaction
-        self.mock_main_window.thumbnail_view = MagicMock()
-        self.mock_main_window.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = [] # Default to no selection
 
 
 
@@ -66,6 +72,7 @@ class TestDialogManager(unittest.TestCase):
         mock_dialog_instance.get_selected_right_click_action.return_value = self.mock_main_window.thumbnail_right_click_action
         mock_dialog_instance.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
         mock_dialog_instance.get_selected_thumbnail_size.return_value = self.mock_main_window.current_thumbnail_size
+        mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
 
         self.dialog_manager.open_settings_dialog()
 
@@ -75,6 +82,7 @@ class TestDialogManager(unittest.TestCase):
             current_preview_mode=self.mock_main_window.image_preview_mode,
             current_right_click_action=self.mock_main_window.thumbnail_right_click_action,
             current_wc_comment_format=self.mock_main_window.wc_creator_comment_format,
+            current_delete_empty_folders_setting=self.mock_main_window.delete_empty_folders_enabled, # ★★★ 追加 ★★★
             parent=self.mock_main_window
         )
         mock_dialog_instance.exec.assert_called_once()
@@ -94,6 +102,7 @@ class TestDialogManager(unittest.TestCase):
         mock_dialog_instance.get_selected_preview_mode.return_value = self.mock_main_window.image_preview_mode
         mock_dialog_instance.get_selected_right_click_action.return_value = self.mock_main_window.thumbnail_right_click_action
         mock_dialog_instance.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
+        mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
 
         # Mock QMessageBox.question to simulate user confirming "Ok"
         mock_qmessagebox_question.return_value = QMessageBox.StandardButton.Ok
@@ -104,6 +113,7 @@ class TestDialogManager(unittest.TestCase):
         mock_qmessagebox_question.assert_called_once() # Ensure confirmation was asked
         self.mock_main_window.apply_thumbnail_size_change.assert_called_once_with(new_thumb_size)
         self.assertEqual(self.mock_main_window.app_settings["thumbnail_size"], new_thumb_size)
+        self.assertEqual(self.mock_main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED], self.mock_main_window.delete_empty_folders_enabled) # ★★★ 追加 ★★★
         self.mock_main_window._write_app_settings_file.assert_called_once()
 
     @patch('src.dialog_manager.SettingsDialog')
@@ -126,23 +136,23 @@ class TestDialogManager(unittest.TestCase):
         mock_proxy_index.isValid.return_value = True
 
         mock_source_index = MagicMock()
-        # self.mock_main_window.filter_proxy_model.mapToSource.return_value = mock_source_index # Overwritten by side_effect below
+        # self.mock_ui_manager.filter_proxy_model.mapToSource.return_value = mock_source_index # Overwritten by side_effect below
 
         if item_exists:
             mock_item = MagicMock()
             mock_item.data = MagicMock(side_effect=lambda role: file_path if role == ConstantsQt.ItemDataRole.UserRole else None)
-            # self.mock_main_window.source_thumbnail_model.itemFromIndex.return_value = mock_item # Overwritten by side_effect below
+            # self.mock_ui_manager.source_thumbnail_model.itemFromIndex.return_value = mock_item # Overwritten by side_effect below
         # else:
-            # self.mock_main_window.source_thumbnail_model.itemFromIndex.return_value = None # Overwritten by side_effect below
+            # self.mock_ui_manager.source_thumbnail_model.itemFromIndex.return_value = None # Overwritten by side_effect below
 
-        self.mock_main_window.filter_proxy_model.rowCount.return_value = visible_paths_count
+        self.mock_ui_manager.filter_proxy_model.rowCount.return_value = visible_paths_count
         
         mock_loop_item = MagicMock()
         mock_loop_item.data = MagicMock(side_effect=lambda role: file_path if role == ConstantsQt.ItemDataRole.UserRole else None)
 
         mock_loop_proxy_idx = MagicMock()
         mock_loop_source_idx = MagicMock()
-        self.mock_main_window.filter_proxy_model.index = MagicMock(return_value=mock_loop_proxy_idx)
+        self.mock_ui_manager.filter_proxy_model.index = MagicMock(return_value=mock_loop_proxy_idx)
         
         def map_to_source_side_effect(idx):
             if idx == mock_proxy_index:
@@ -150,7 +160,7 @@ class TestDialogManager(unittest.TestCase):
             elif idx == mock_loop_proxy_idx:
                 return mock_loop_source_idx
             return MagicMock()
-        self.mock_main_window.filter_proxy_model.mapToSource.side_effect = map_to_source_side_effect
+        self.mock_ui_manager.filter_proxy_model.mapToSource.side_effect = map_to_source_side_effect
         
         # This mock_item is for the initially clicked item
         initial_mock_item = MagicMock()
@@ -162,7 +172,7 @@ class TestDialogManager(unittest.TestCase):
             elif idx == mock_loop_source_idx: # For items in the loop
                 return mock_loop_item
             return None
-        self.mock_main_window.source_thumbnail_model.itemFromIndex.side_effect = item_from_index_side_effect
+        self.mock_ui_manager.source_thumbnail_model.itemFromIndex.side_effect = item_from_index_side_effect
 
         return mock_proxy_index
 
@@ -203,7 +213,7 @@ class TestDialogManager(unittest.TestCase):
         mock_proxy_index.isValid.return_value = True
 
         mock_source_index = MagicMock()
-        self.mock_main_window.filter_proxy_model.mapToSource.return_value = mock_source_index
+        self.mock_ui_manager.filter_proxy_model.mapToSource.return_value = mock_source_index
 
         if item_exists:
             mock_item = MagicMock()
@@ -214,9 +224,9 @@ class TestDialogManager(unittest.TestCase):
                     return metadata_in_item
                 return None
             mock_item.data = MagicMock(side_effect=item_data_side_effect)
-            self.mock_main_window.source_thumbnail_model.itemFromIndex.return_value = mock_item
+            self.mock_ui_manager.source_thumbnail_model.itemFromIndex.return_value = mock_item
         else:
-            self.mock_main_window.source_thumbnail_model.itemFromIndex.return_value = None
+            self.mock_ui_manager.source_thumbnail_model.itemFromIndex.return_value = None
 
         self.mock_main_window.metadata_cache.clear()
         if metadata_in_cache:
@@ -387,12 +397,12 @@ class TestDialogManager(unittest.TestCase):
             mock_item.data = MagicMock(side_effect=create_item_data_side_effect(file_path, metadata_on_item))
             item_from_index_dict[mock_source_idx] = mock_item
 
-            if metadata_in_cache:
-                self.mock_main_window.metadata_cache[file_path] = metadata_in_cache
+            if metadata_in_cache is not None: # Ensure None isn't added to cache
+                self.mock_main_window.metadata_cache[file_path] = metadata_in_cache # metadata_cache is on main_window
         
-        self.mock_main_window.filter_proxy_model.mapToSource = MagicMock(side_effect=lambda p_idx: map_to_source_dict.get(p_idx))
-        self.mock_main_window.source_thumbnail_model.itemFromIndex = MagicMock(side_effect=lambda s_idx: item_from_index_dict.get(s_idx))
-        self.mock_main_window.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = mock_selected_proxy_indexes
+        self.mock_ui_manager.filter_proxy_model.mapToSource = MagicMock(side_effect=lambda p_idx: map_to_source_dict.get(p_idx))
+        self.mock_ui_manager.source_thumbnail_model.itemFromIndex = MagicMock(side_effect=lambda s_idx: item_from_index_dict.get(s_idx))
+        self.mock_ui_manager.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = mock_selected_proxy_indexes
 
     @patch('src.dialog_manager.WCCreatorDialog')
     @patch('src.dialog_manager.QMessageBox') 

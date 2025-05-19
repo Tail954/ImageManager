@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
      QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox, QStyledItemDelegate
 )
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection # <--- ★QDirIterator, QModelIndex, QItemSelection をインポート
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray # <--- ★QWIDGETSIZE_MAX のインポートを削除
 import os # For path operations
 from pathlib import Path # For path operations
 import json # For settings / metadata parsing
@@ -40,12 +40,15 @@ from .wc_creator_dialog import WCCreatorDialog
 from .metadata_utils import extract_image_metadata # Import shared metadata extraction
 from .dialog_manager import DialogManager # Import DialogManager
 from .file_operation_manager import FileOperationManager # New import
+from .ui_manager import UIManager # ★★★ UIManagerをインポート ★★★
 
 from .constants import (
     APP_SETTINGS_FILE,
     METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
-    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
-    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT
+    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, 
+    DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
+    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
+    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ★★★ ジオメトリ定数をインポート ★★★
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +64,7 @@ class MainWindow(QMainWindow):
         # self.metadata_dialog_instance = None # DialogManagerが管理
         self.drop_window_instance = None # <--- ★追加: DropWindowのインスタンスを保持
         self.dialog_manager = DialogManager(self) # DialogManagerのインスタンス化
+        self.ui_manager = UIManager(self) # ★★★ UIManagerのインスタンス化 ★★★
 
         self.setWindowTitle("ImageManager")
         self.setGeometry(100, 100, 1200, 800)
@@ -74,9 +78,7 @@ class MainWindow(QMainWindow):
         self.is_copy_mode = False # Flag for copy mode state, True if copy mode is active
         self.copy_selection_order = [] # Stores QStandardItem references in copy mode selection order        
         self._hidden_moved_file_paths = set() # Set to store paths of files moved out of the current view
-        # self.progress_dialog = None # Moved to FileOperationManager
-        self.progress_dialog = None # For cancellation dialog
-        self.initial_dialog_path = None # For storing path from settings
+        self.initial_folder_dialog_path = None # For storing path from settings
         self.metadata_dialog_last_geometry = None # DialogManagerがMainWindowのこの属性を参照・更新する
         # self.full_image_dialog_instance = None # DialogManagerが管理する
         self.image_preview_mode = PREVIEW_MODE_FIT # Default, will be overwritten by _load_app_settings
@@ -92,6 +94,7 @@ class MainWindow(QMainWindow):
         self.load_start_time = None # For load time measurement
         self.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA # Default value
         self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
+        self.delete_empty_folders_enabled = True # ★★★ 追加: デフォルトは有効 ★★★
 
         self.file_operation_manager = FileOperationManager(self) # New instance
         self.file_operations = FileOperations(parent=self, file_op_manager=self.file_operation_manager) # Pass manager
@@ -99,219 +102,18 @@ class MainWindow(QMainWindow):
         # Load application-wide settings first
         self._load_app_settings()
 
-        # Menu Bar
-        self._create_menu_bar() # <-- ★ここでメニューが作成される
+        # --- ★★★ UIセットアップをUIManagerに委譲 ★★★ ---
+        self.ui_manager.setup_ui()
 
-        # Status bar
-        self.statusBar = self.statusBar()
+        # 設定からウィンドウジオメトリを復元 (UIセットアップ後、show()の前が望ましい)
+        if self.app_settings.get(MAIN_WINDOW_GEOMETRY):
+            geom_byte_array = QByteArray.fromBase64(self.app_settings[MAIN_WINDOW_GEOMETRY].encode('utf-8'))
+            self.restoreGeometry(geom_byte_array)
 
-        # Central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-
-        # Main layout
-        main_layout = QHBoxLayout(central_widget)
-
-        # Splitter for resizable panels
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # Left panel (folder tree and button)
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.folder_select_button = QPushButton("フォルダを選択...")
-        self.folder_select_button.clicked.connect(self.select_folder)
-        left_layout.addWidget(self.folder_select_button)
-
-        # Selection buttons layout
-        selection_button_layout = QHBoxLayout()
-        self.select_all_button = QPushButton("全選択")
-        self.select_all_button.clicked.connect(self.select_all_thumbnails)
-        selection_button_layout.addWidget(self.select_all_button)
-
-        self.deselect_all_button = QPushButton("全選択解除")
-        self.deselect_all_button.clicked.connect(self.deselect_all_thumbnails)
-        selection_button_layout.addWidget(self.deselect_all_button)
-        # left_layout.addLayout(selection_button_layout) # Removed from here
-
-        self.recursive_toggle_button = QPushButton("サブフォルダ検索: ON")
-        self.recursive_toggle_button.setCheckable(True)
-        self.recursive_toggle_button.setChecked(self.recursive_search_enabled)
-        self.recursive_toggle_button.toggled.connect(self.handle_recursive_search_toggled)
-        left_layout.addWidget(self.recursive_toggle_button)
-
-        # --- Sort Options UI ---
-        sort_options_group_box = QFrame()
-        sort_options_group_box.setFrameShape(QFrame.Shape.StyledPanel)
-        sort_options_layout = QVBoxLayout(sort_options_group_box)
-        sort_options_layout.setContentsMargins(5,5,5,5)
-
-        sort_options_layout.addWidget(QLabel("ソート:")) # ★★★ 「ソート:」見出しを追加 ★★★
-
-        # --- New Toggle Button Sort UI ---
-        self.sort_button_group = QButtonGroup(self)
-        self.sort_button_group.setExclusive(True)
-
-        sort_buttons_layout_row1 = QHBoxLayout()
-        self.sort_filename_asc_button = QPushButton(self.sort_criteria_map[0]["caption"])
-        self.sort_filename_asc_button.setCheckable(True)
-        self.sort_button_group.addButton(self.sort_filename_asc_button, 0)
-        sort_buttons_layout_row1.addWidget(self.sort_filename_asc_button)
-
-        self.sort_filename_desc_button = QPushButton(self.sort_criteria_map[1]["caption"])
-        self.sort_filename_desc_button.setCheckable(True)
-        self.sort_button_group.addButton(self.sort_filename_desc_button, 1)
-        sort_buttons_layout_row1.addWidget(self.sort_filename_desc_button)
-        sort_options_layout.addLayout(sort_buttons_layout_row1)
-
-        sort_buttons_layout_row2 = QHBoxLayout()
-        self.sort_date_asc_button = QPushButton(self.sort_criteria_map[2]["caption"])
-        self.sort_date_asc_button.setCheckable(True)
-        self.sort_button_group.addButton(self.sort_date_asc_button, 2)
-        sort_buttons_layout_row2.addWidget(self.sort_date_asc_button)
-
-        self.sort_date_desc_button = QPushButton(self.sort_criteria_map[3]["caption"])
-        self.sort_date_desc_button.setCheckable(True)
-        self.sort_button_group.addButton(self.sort_date_desc_button, 3)
-        sort_buttons_layout_row2.addWidget(self.sort_date_desc_button)
-        sort_options_layout.addLayout(sort_buttons_layout_row2)
-
-        # self.sort_button_group.buttonClicked[int].connect(self._apply_sort_from_toggle_button) # KeyErrorの原因
-        # int型のIDを受け取るシグナルに接続
-        self.sort_button_group.idClicked.connect(self._apply_sort_from_toggle_button)
-        # --- End New Toggle Button Sort UI ---
-
-        left_layout.addWidget(sort_options_group_box)
-        # --- End Sort Options UI ---
-
-        # --- Filter UI Elements ---
-        filter_group_box = QFrame() # Using QFrame for visual grouping, could be QGroupBox
-        filter_group_box.setFrameShape(QFrame.Shape.StyledPanel)
-        filter_layout = QVBoxLayout(filter_group_box)
-        filter_layout.setContentsMargins(5,5,5,5)
-        filter_layout.addWidget(QLabel("フィルター (カンマ区切りで複数ワード):"))
-
-        # AND/OR Radio Buttons
-        search_mode_layout = QHBoxLayout()
-        search_mode_label = QLabel("検索条件:")
-        search_mode_layout.addWidget(search_mode_label)
-        self.and_radio_button = QRadioButton("AND検索")
-        self.and_radio_button.setChecked(True) # Default to AND
-        # self.and_radio_button.toggled.connect(self.apply_filters) # Disconnect to prevent auto-filtering
-        search_mode_layout.addWidget(self.and_radio_button)
-        self.or_radio_button = QRadioButton("OR検索")
-        # self.or_radio_button.toggled.connect(self.apply_filters) # Disconnect to prevent auto-filtering
-        search_mode_layout.addWidget(self.or_radio_button)
-
-        # Group for exclusive selection
-        self.search_mode_button_group = QButtonGroup(self)
-        self.search_mode_button_group.addButton(self.and_radio_button)
-        self.search_mode_button_group.addButton(self.or_radio_button)
-        filter_layout.addLayout(search_mode_layout)
-
-        self.positive_prompt_filter_edit = QLineEdit()
-        self.positive_prompt_filter_edit.setPlaceholderText("Positive Prompt を含む...")
-        # self.positive_prompt_filter_edit.textChanged.connect(self.apply_filters) # Disconnect textChanged
-        self.positive_prompt_filter_edit.returnPressed.connect(self.apply_filters) # Connect returnPressed
-        filter_layout.addWidget(self.positive_prompt_filter_edit)
-
-        self.negative_prompt_filter_edit = QLineEdit()
-        self.negative_prompt_filter_edit.setPlaceholderText("Negative Prompt を含む...")
-        # self.negative_prompt_filter_edit.textChanged.connect(self.apply_filters) # Disconnect textChanged
-        self.negative_prompt_filter_edit.returnPressed.connect(self.apply_filters) # Connect returnPressed
-        filter_layout.addWidget(self.negative_prompt_filter_edit)
-
-        self.generation_info_filter_edit = QLineEdit()
-        self.generation_info_filter_edit.setPlaceholderText("Generation Info を含む...")
-        # self.generation_info_filter_edit.textChanged.connect(self.apply_filters) # Disconnect textChanged
-        self.generation_info_filter_edit.returnPressed.connect(self.apply_filters) # Connect returnPressed
-        filter_layout.addWidget(self.generation_info_filter_edit)
-
-        self.apply_filter_button = QPushButton("フィルタ適用")
-        self.apply_filter_button.clicked.connect(self.apply_filters)
-        filter_layout.addWidget(self.apply_filter_button)
-
-        left_layout.addWidget(filter_group_box)
-        # --- End Filter UI ---
-
-        # --- File Operations UI ---
-        file_op_group_box = QFrame()
-        file_op_group_box.setFrameShape(QFrame.Shape.StyledPanel)
-        file_op_layout = QVBoxLayout(file_op_group_box)
-        file_op_layout.setContentsMargins(5,5,5,5)
-        file_op_layout.addWidget(QLabel("ファイル操作:"))
-
-        file_op_layout.addLayout(selection_button_layout) # Added here
-
-        self.move_files_button = QPushButton("ファイルを移動")
-        self.move_files_button.clicked.connect(self.file_operation_manager._handle_move_files_button_clicked)
-        file_op_layout.addWidget(self.move_files_button)
-
-        self.copy_mode_button = QPushButton("Copy Mode: OFF")
-        self.copy_mode_button.setCheckable(True)
-        self.copy_mode_button.toggled.connect(self.file_operation_manager._handle_copy_mode_toggled)
-        file_op_layout.addWidget(self.copy_mode_button)
-
-        self.copy_files_button = QPushButton("ファイルをコピー")
-        self.copy_files_button.clicked.connect(self.file_operation_manager._handle_copy_files_button_clicked)
-        self.copy_files_button.setEnabled(False) # Initially disabled
-        file_op_layout.addWidget(self.copy_files_button)
-
-        left_layout.addWidget(file_op_group_box)
-        # --- End File Operations UI ---
-
-        self.folder_tree_view = QTreeView()
-        self.folder_tree_view.setHeaderHidden(True)
-        self.file_system_model = QFileSystemModel()
-        self.file_system_model.setNameFilters(["*.png", "*.jpg", "*.jpeg", "*.webp"])
-        self.file_system_model.setNameFilterDisables(False)
-        self.folder_tree_view.setModel(self.file_system_model)
-        for i in range(1, self.file_system_model.columnCount()):
-            self.folder_tree_view.hideColumn(i)
-        left_layout.addWidget(self.folder_tree_view)
-        self.folder_tree_view.clicked.connect(self.on_folder_tree_clicked)
-
-        splitter.addWidget(left_panel)
-
-        self.thumbnail_view = ToggleSelectionListView() # Use custom ListView
-        self.thumbnail_view.setViewMode(ToggleSelectionListView.ViewMode.IconMode) # Access ViewMode via class
-        self.thumbnail_view.setResizeMode(ToggleSelectionListView.ResizeMode.Adjust) # Access ResizeMode via class
-        self.thumbnail_view.setMovement(ToggleSelectionListView.Movement.Static) # Access Movement via class
-        self.thumbnail_view.setSpacing(10)
-        self.thumbnail_view.setIconSize(QSize(self.current_thumbnail_size, self.current_thumbnail_size))
-        self.thumbnail_view.setGridSize(QSize(self.current_thumbnail_size + 10, self.current_thumbnail_size + 10))
-        self.thumbnail_view.setUniformItemSizes(True)
-        self.thumbnail_view.setLayoutMode(QListView.LayoutMode.Batched) # Use QListView.LayoutMode
-        self.thumbnail_view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel) # Enable pixel-based scrolling
-        self.thumbnail_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection) # This should be fine as QAbstractItemView is imported
-        self.thumbnail_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.thumbnail_view.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
-        self.thumbnail_view.item_double_clicked.connect(self.dialog_manager.open_full_image_dialog) # DialogManager経由で呼び出し
-
-        self.thumbnail_delegate = ThumbnailDelegate(self.thumbnail_view) # Create delegate instance
-        self.thumbnail_view.setItemDelegate(self.thumbnail_delegate) # Set delegate
-        self.thumbnail_view.setStyleSheet("""
-            QListView::item:selected {
-                border: 3px solid orange;
-            }
-            QListView::item {
-                border: none;
-            }
-        """)
-
-        self.source_thumbnail_model = QStandardItemModel(self) # Source model for thumbnails
-
-        self.filter_proxy_model = MetadataFilterProxyModel(self)
-        self.filter_proxy_model.setSourceModel(self.source_thumbnail_model)
-
-        self.thumbnail_view.setModel(self.filter_proxy_model) # Use the proxy model
-
-        self.thumbnail_view.selectionModel().selectionChanged.connect(self.handle_thumbnail_selection_changed)
-        splitter.addWidget(self.thumbnail_view)
-
-        splitter.setSizes([300, 900])
-        main_layout.addWidget(splitter)
+        # スプリッターのシグナルを接続 (UIセットアップ後)
+        if self.ui_manager.splitter: # UIManager で splitter が self.splitter として保持されている前提
+            self.ui_manager.splitter.splitterMoved.connect(self.handle_splitter_moved)
+            logger.debug("Splitter signal connected for dynamic left panel width.")
 
         # self._load_settings() # Load UI specific settings after all UI elements are initialized <=self._load_app_settings()に統合
         self._apply_initial_sort_from_settings() # Apply initial sort based on loaded or default settings
@@ -322,46 +124,71 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'statusBar') or not self.statusBar:
             return
         total_items = 0
-        if self.filter_proxy_model:
-            total_items = self.filter_proxy_model.rowCount()
+        if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由 ★★★
+            total_items = self.ui_manager.filter_proxy_model.rowCount() # ★★★ UIManager経由 ★★★
         selected_items = 0
-        if hasattr(self, 'thumbnail_view') and self.thumbnail_view.selectionModel():
-            selected_items = len(self.thumbnail_view.selectionModel().selectedIndexes())
+        if self.ui_manager.thumbnail_view and self.ui_manager.thumbnail_view.selectionModel(): # ★★★ UIManager経由 ★★★
+            selected_items = len(self.ui_manager.thumbnail_view.selectionModel().selectedIndexes()) # ★★★ UIManager経由 ★★★
         self.statusBar.showMessage(f"表示アイテム数: {total_items} / 選択アイテム数: {selected_items}")
 
     def _apply_initial_sort_from_settings(self):
         """アプリケーション起動時に設定からソートを適用する"""
-        button_to_check = self.sort_button_group.button(self.current_sort_button_id)
+        # このメソッドはUIの初期状態を設定する役割。
+        # setChecked(True) が _apply_sort_from_toggle_button をトリガーするが、
+        # _apply_sort_from_toggle_button 側で読み込み中やモデル空の状態をハンドルする。
+        button_to_check = self.ui_manager.sort_button_group.button(self.current_sort_button_id) # ★★★ UIManager経由 ★★★
         if button_to_check:
             button_to_check.setChecked(True) # これにより _apply_sort_from_toggle_button がトリガーされる
+            logger.info(f"初期ソートUI状態をボタンID {self.current_sort_button_id} に設定しました。実際のソートはデータ読み込み後です。")
         else: # フォールバック
             logger.warning(f"初期ソートボタンID {self.current_sort_button_id} が無効です。デフォルトのファイル名昇順を適用します。")
             self.current_sort_button_id = 0 # ID 0 (ファイル名 ↑) にリセット
-            if default_button := self.sort_button_group.button(0):
+            if default_button := self.ui_manager.sort_button_group.button(0): # UIManager経由
                 default_button.setChecked(True)
 
     def _apply_sort_from_toggle_button(self, button_id: int):
         """トグルボタンのクリックに基づいてソートを実行する"""
-        if not self.filter_proxy_model or not self.source_thumbnail_model:
+        if not self.ui_manager.filter_proxy_model or not self.ui_manager.source_thumbnail_model: # ★★★ UIManager経由 ★★★
             logger.warning("_apply_sort_from_toggle_button: Models not ready.")
+            return
+
+        self.current_sort_button_id = button_id # 現在のソート状態を更新
+
+        if self.is_loading_thumbnails:
+            logger.info(f"ソートボタン {button_id} がクリックされましたが、サムネイル読み込み中です。設定のみ更新し、ソートは読み込み完了後に行われます。")
+            return
+
+        if self.ui_manager.source_thumbnail_model.rowCount() == 0 and not self.is_loading_thumbnails:
+            logger.info("_apply_sort_from_toggle_button: Source model is empty and not loading. Sort will have no effect.")
+            # ステータスバー更新は行っても良い
+            self._update_status_bar_info()
             return
 
         self.current_sort_button_id = button_id # 現在のソート状態を更新
         selected_criteria = self.sort_criteria_map.get(self.current_sort_button_id)
 
-        if selected_criteria:
-            key_type = selected_criteria["key_type"]
-            sort_order = selected_criteria["order"]
-            
-            logger.info(f"Applying sort. Button ID: {button_id}, Criteria: '{selected_criteria['name']}', Key Type: {key_type}, Order: {sort_order}")
-            
-            self.filter_proxy_model.set_sort_key_type(key_type)
+        if not selected_criteria:
+            logger.warning(f"Invalid sort button ID: {self.current_sort_button_id}")
+            return
+
+        key_type = selected_criteria["key_type"]
+        sort_order = selected_criteria["order"]
+        
+        logger.info(f"Applying sort. Button ID: {button_id}, Criteria: '{selected_criteria['name']}', Key Type: {key_type}, Order: {sort_order}")
+        
+        # --- ソート処理中にUIをロック ---
+        self.ui_manager.set_sort_buttons_enabled(False) # ソートボタン群のみを無効化
+        QApplication.processEvents() # ボタンの無効化状態を即時反映
+
+        try:
+            self.ui_manager.filter_proxy_model.set_sort_key_type(key_type) # ★★★ UIManager経由 ★★★
             # QSortFilterProxyModel.sort() を呼び出すと、lessThan が使用される
             # 列インデックスは0で固定 (lessThan内で実際のキータイプを見るため)
-            self.filter_proxy_model.sort(0, sort_order)
-            self._update_status_bar_info()
-        else:
-            logger.warning(f"Invalid sort button ID: {self.current_sort_button_id}")
+            self.ui_manager.filter_proxy_model.sort(0, sort_order) # ★★★ UIManager経由 ★★★
+        finally:
+            # --- ソート処理完了後、UIロックを解除 ---
+            self.ui_manager.set_sort_buttons_enabled(True) # ソートボタン群を再度有効化
+        self._update_status_bar_info()
 
     def _create_menu_bar(self):
         """ メニューバーを作成し、アクションを直接配置 """
@@ -399,7 +226,16 @@ class MainWindow(QMainWindow):
         self.app_settings["last_folder_path"] = self.current_folder_path
         self.app_settings["recursive_search"] = self.recursive_search_enabled
         # self.app_settings["sort_criteria_index"] = self.current_sort_criteria_index # 廃止 (コンボボックス用)
+        self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled # ★★★ 追加 ★★★
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
+
+        # ★★★ ウィンドウジオメトリの保存 ★★★
+        self.app_settings[MAIN_WINDOW_GEOMETRY] = self.saveGeometry().toBase64().data().decode('utf-8')
+        if self.metadata_dialog_last_geometry and isinstance(self.metadata_dialog_last_geometry, QByteArray):
+            self.app_settings[METADATA_DIALOG_GEOMETRY] = self.metadata_dialog_last_geometry.toBase64().data().decode('utf-8')
+        elif METADATA_DIALOG_GEOMETRY in self.app_settings: # 以前の値があるが、現在は無効なら削除
+            del self.app_settings[METADATA_DIALOG_GEOMETRY]
+
 
         self._write_app_settings_file(self.app_settings)
 
@@ -422,10 +258,17 @@ class MainWindow(QMainWindow):
                 THUMBNAIL_RIGHT_CLICK_ACTION: self.thumbnail_right_click_action,
                 WC_COMMENT_OUTPUT_FORMAT: self.wc_creator_comment_format,
                 "last_folder_path": self.current_folder_path,
+                DELETE_EMPTY_FOLDERS_ENABLED: self.delete_empty_folders_enabled, # ★★★ 追加 ★★★
                 "recursive_search": self.recursive_search_enabled,
                 # "sort_criteria_index": self.current_sort_criteria_index, # 廃止
                 "sort_button_id": self.current_sort_button_id, # 新しいトグルボタンUI用
+                MAIN_WINDOW_GEOMETRY: self.saveGeometry().toBase64().data().decode('utf-8'),
             }
+            if self.metadata_dialog_last_geometry and isinstance(self.metadata_dialog_last_geometry, QByteArray):
+                settings_dict[METADATA_DIALOG_GEOMETRY] = self.metadata_dialog_last_geometry.toBase64().data().decode('utf-8')
+            elif METADATA_DIALOG_GEOMETRY in settings_dict:
+                del settings_dict[METADATA_DIALOG_GEOMETRY]
+
         try:
             with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(settings_dict, f, indent=4)
@@ -461,16 +304,16 @@ class MainWindow(QMainWindow):
         # 最終フォルダパス
         if lp_val := self.app_settings.get("last_folder_path"):
             if os.path.isdir(lp_val):
-                self.initial_dialog_path = lp_val
-                logger.info(f"前回終了時のフォルダパスを読み込みました: {self.initial_dialog_path}")
+                self.initial_folder_dialog_path = lp_val
+                logger.info(f"前回終了時のフォルダパスを読み込みました: {self.initial_folder_dialog_path}")
             else:
                 logger.warning(f"保存されたフォルダパスが無効または見つかりません: {lp_val}")
 
         # 再帰検索設定
         self.recursive_search_enabled = self.app_settings.get("recursive_search", True)
-        if hasattr(self, 'recursive_toggle_button') and self.recursive_toggle_button: # UI要素が存在すれば更新
-            self.recursive_toggle_button.setChecked(self.recursive_search_enabled)
-            self.recursive_toggle_button.setText(f"サブフォルダ検索: {'ON' if self.recursive_search_enabled else 'OFF'}")
+        if self.ui_manager.recursive_toggle_button: # ★★★ UIManager経由 ★★★
+            self.ui_manager.recursive_toggle_button.setChecked(self.recursive_search_enabled)
+            self.ui_manager.update_recursive_button_text(self.recursive_search_enabled) # ★★★ UIManager経由 ★★★
         logger.info(f"再帰検索設定を読み込みました: {'ON' if self.recursive_search_enabled else 'OFF'}")
 
         # ソート設定
@@ -478,24 +321,38 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'sort_button_group'): # UI要素が存在すれば更新
             button_to_check = self.sort_button_group.button(self.current_sort_button_id)
             if button_to_check:
-                pass # _apply_initial_sort_from_settings でチェックされる
+                pass # _apply_initial_sort_from_settings でチェックされる (sort_button_groupはui_managerが持つ)
             else:
                 logger.warning(f"保存されたソートボタンIDが無効: {self.current_sort_button_id}。0にリセットします。")
                 self.current_sort_button_id = 0
         logger.info(f"ソートボタンIDを読み込みました: {self.current_sort_button_id} ('{self.sort_criteria_map.get(self.current_sort_button_id, {}).get('name', 'N/A')}')")
 
+        # ★★★ 追加: 空フォルダ削除設定 ★★★
+        self.delete_empty_folders_enabled = self.app_settings.get(DELETE_EMPTY_FOLDERS_ENABLED, True)
+        logger.info(f"空フォルダ削除設定を読み込みました: {'有効' if self.delete_empty_folders_enabled else '無効'}")
+
+        # ★★★ ウィンドウジオメトリの読み込み (適用は __init__ の最後で行う) ★★★
+        if main_geom_str := self.app_settings.get(MAIN_WINDOW_GEOMETRY):
+            # self.restoreGeometry(QByteArray.fromBase64(main_geom_str.encode('utf-8'))) # ここでは適用しない
+            logger.info(f"メインウィンドウのジオメトリを読み込みました。")
+        if meta_geom_str := self.app_settings.get(METADATA_DIALOG_GEOMETRY):
+            self.metadata_dialog_last_geometry = QByteArray.fromBase64(meta_geom_str.encode('utf-8'))
+            logger.info(f"メタデータダイアログのジオメトリを読み込みました。")
+
+
     def select_folder(self):
         start_dir = ""
         if self.current_folder_path and os.path.isdir(self.current_folder_path):
             start_dir = self.current_folder_path
-        elif self.initial_dialog_path and os.path.isdir(self.initial_dialog_path):
-            start_dir = self.initial_dialog_path
+        elif self.initial_folder_dialog_path and os.path.isdir(self.initial_folder_dialog_path):
+            start_dir = self.initial_folder_dialog_path
         folder_path = QFileDialog.getExistingDirectory(self, "画像フォルダを選択", start_dir)
+
         if folder_path:
             logger.info(f"選択されたフォルダ: {folder_path}")
-            # ★★★ 空フォルダ削除処理をここに移動 ★★★
-            if os.path.isdir(folder_path):
-                self._try_delete_empty_subfolders(folder_path)
+            # ★★★ 設定に基づいて空フォルダ削除処理を実行 ★★★
+            if self.delete_empty_folders_enabled and os.path.isdir(folder_path):
+                self._try_delete_empty_subfolders(folder_path) 
             self.update_folder_tree(folder_path)
 
     def update_folder_tree(self, folder_path):
@@ -503,28 +360,26 @@ class MainWindow(QMainWindow):
         parent_dir = QDir(folder_path)
         root_display_path = folder_path
         if parent_dir.cdUp():
-            root_display_path = parent_dir.path()
+            root_display_path = parent_dir.path() # QDir.path() returns the path as a string
         logger.debug(f"ユーザー選択フォルダ: {folder_path}")
         logger.debug(f"ツリー表示ルート: {root_display_path}")
-        self.file_system_model.setRootPath(root_display_path)
-        root_index = self.file_system_model.index(root_display_path)
-        self.folder_tree_view.setRootIndex(root_index)
-        selected_folder_index = self.file_system_model.index(folder_path)
+        self.ui_manager.file_system_model.setRootPath(root_display_path) # ★★★ UIManager経由 ★★★
+        root_index = self.ui_manager.file_system_model.index(root_display_path) # ★★★ UIManager経由 ★★★
+        self.ui_manager.folder_tree_view.setRootIndex(root_index) # ★★★ UIManager経由 ★★★
+        selected_folder_index = self.ui_manager.file_system_model.index(folder_path) # ★★★ UIManager経由 ★★★
         if selected_folder_index.isValid():
-            self.folder_tree_view.expand(selected_folder_index.parent())
-            self.folder_tree_view.setCurrentIndex(selected_folder_index)
-            self.folder_tree_view.scrollTo(selected_folder_index, QTreeView.ScrollHint.PositionAtCenter)
+            self.ui_manager.folder_tree_view.expand(selected_folder_index.parent()) # ★★★ UIManager経由 ★★★
+            self.ui_manager.folder_tree_view.setCurrentIndex(selected_folder_index) # ★★★ UIManager経由 ★★★
+            self.ui_manager.folder_tree_view.scrollTo(selected_folder_index, QTreeView.ScrollHint.PositionAtCenter) # ★★★ UIManager経由 ★★★
         logger.info(f"フォルダツリーを更新しました。表示ルート: {root_display_path}, 選択中: {folder_path}")
         self.load_thumbnails_from_folder(folder_path)
 
     def on_folder_tree_clicked(self, index):
-        path = self.file_system_model.filePath(index)
-        if self.file_system_model.isDir(index):
+        path = self.ui_manager.file_system_model.filePath(index) # ★★★ UIManager経由 ★★★
+        if self.ui_manager.file_system_model.isDir(index): # ★★★ UIManager経由 ★★★
             logger.info(f"フォルダがクリックされました: {path}")
             self.current_folder_path = path
-            # ★★★ 空フォルダ削除処理をここに移動 ★★★
-            if os.path.isdir(path):
-                self._try_delete_empty_subfolders(path)
+            # ★★★ フォルダツリークリック時は空フォルダ削除を実行しない ★★★
             self.load_thumbnails_from_folder(path)
         else:
             logger.debug(f"ファイルがクリックされました: {path}")
@@ -564,39 +419,18 @@ class MainWindow(QMainWindow):
             # ★★★ 新しいフォルダを読み込む前に、コピーモードの選択状態をクリア ★★★
             if self.is_copy_mode:
                 logger.info("フォルダ変更のため、コピーモードの選択情報をクリアします。")
-                selection_model = self.thumbnail_view.selectionModel()
+                selection_model = self.ui_manager.thumbnail_view.selectionModel() # ★★★ UIManager経由 ★★★
                 if selection_model: # シグナルを一時的に切断
                     try: selection_model.selectionChanged.disconnect(self.handle_thumbnail_selection_changed)
                     except TypeError: pass # 接続されていなかった場合
-                for item_in_order in list(self.copy_selection_order): # リストのコピーをイテレート
-                    if item_in_order.model() == self.source_thumbnail_model: # アイテムが現在のモデルに属しているか確認
+                for item_in_order in list(self.copy_selection_order): 
+                    if item_in_order.model() == self.ui_manager.source_thumbnail_model: # ★★★ UIManager経由 ★★★
                         item_in_order.setData(None, SELECTION_ORDER_ROLE)
                 self.copy_selection_order.clear()
                 if selection_model: # シグナルを再接続
                     selection_model.selectionChanged.connect(self.handle_thumbnail_selection_changed)
                 self.deselect_all_thumbnails() # ビューの選択もクリア
             # ★★★ コピーモードクリア処理ここまで ★★★
-
-            if self.thumbnail_loader_thread and self.thumbnail_loader_thread.isRunning():
-                logger.info("既存のサムネイル読み込みスレッドを停止します...")
-                # シグナル接続を解除
-                try:
-                    self.thumbnail_loader_thread.thumbnailLoaded.disconnect(self.update_thumbnail_item)
-                    self.thumbnail_loader_thread.progressUpdated.disconnect(self.update_progress_bar)
-                    self.thumbnail_loader_thread.finished.disconnect(self.on_thumbnail_loading_finished)
-                    logger.debug("既存スレッドのシグナル接続を解除しました。")
-                except TypeError: # disconnect中にエラーが発生することがある (既に接続されていない場合など)
-                    logger.debug("既存スレッドのシグナル接続解除中にエラー発生、または既に解除済み。")
-                except Exception as e:
-                    logger.error(f"既存スレッドのシグナル接続解除中に予期せぬエラー: {e}", exc_info=True)
-
-                self.thumbnail_loader_thread.stop() # スレッドに停止を要求
-                if not self.thumbnail_loader_thread.wait(7000): # タイムアウトを少し長めに設定
-                    logger.warning("既存スレッドの終了待機がタイムアウトしました。")
-                else:
-                    logger.info("既存スレッドが正常に終了しました。")
-                self.thumbnail_loader_thread.deleteLater() # Qtのイベントループで安全に削除
-                self.thumbnail_loader_thread = None # 参照をクリア
 
             search_flags = QDirIterator.IteratorFlag.Subdirectories if self.recursive_search_enabled else QDirIterator.IteratorFlag.NoIteratorFlags
             iterator = QDirIterator(folder_path,
@@ -606,44 +440,32 @@ class MainWindow(QMainWindow):
             while iterator.hasNext():
                 image_files.append(iterator.next())
             logger.info(f"見つかった画像ファイル (再帰検索{'含む' if self.recursive_search_enabled else '含まない'}): {len(image_files)}個")
+            
+            # ★★★ UI状態変更をUIManagerに委譲 ★★★
+            self.ui_manager.set_thumbnail_loading_ui_state(True)
             self.is_loading_thumbnails = True
-            self.folder_tree_view.setEnabled(False)
-            self.recursive_toggle_button.setEnabled(False)
-            self.deselect_all_button.setEnabled(False)
-            self.select_all_button.setEnabled(False)
-            self.positive_prompt_filter_edit.setEnabled(False)
-            self.negative_prompt_filter_edit.setEnabled(False)
-            self.generation_info_filter_edit.setEnabled(False)
-            self.and_radio_button.setEnabled(False)
-            self.or_radio_button.setEnabled(False)
-            # Disable sort toggle buttons
-            for button_id_loop in range(len(self.sort_criteria_map)): # Renamed button_id to avoid conflict
-                if btn := self.sort_button_group.button(button_id_loop):
-                    btn.setEnabled(False)
 
             # モデルをクリアする前に、本当に古いスレッドがいないことを確認
             QApplication.processEvents() # 保留中のイベントを処理
 
-            self.source_thumbnail_model.clear()
+            self.ui_manager.source_thumbnail_model.clear() # ★★★ UIManager経由 ★★★
             # 新しいフォルダを読み込む際に、非表示リストをクリアしProxyModelに通知
             self._hidden_moved_file_paths.clear() # MainWindow's list of paths to hide
-            self.filter_proxy_model.set_hidden_paths(self._hidden_moved_file_paths) # Update proxy model's hidden paths
+            self.ui_manager.filter_proxy_model.set_hidden_paths(self._hidden_moved_file_paths) # ★★★ UIManager経由 ★★★
             logger.debug("source_thumbnail_model をクリアしました。")
             self.selected_file_paths.clear()
             self.metadata_cache.clear() # メタデータキャッシュもクリア
-            self.thumbnail_view.setIconSize(QSize(self.current_thumbnail_size, self.current_thumbnail_size))
-            self.thumbnail_view.setGridSize(QSize(self.current_thumbnail_size + 10, self.current_thumbnail_size + 10))
+            self.ui_manager.update_thumbnail_view_sizes() # ★★★ UIManager経由 ★★★
             placeholder_pixmap = QPixmap(self.current_thumbnail_size, self.current_thumbnail_size)
             placeholder_pixmap.fill(Qt.GlobalColor.transparent)
             placeholder_icon = QIcon(placeholder_pixmap)
-            # items_for_thread = [] # 初期化を try の前に移動
             for f_path in image_files:
                 item = QStandardItem()
                 item.setIcon(placeholder_icon)
                 item.setText(QDir().toNativeSeparators(f_path).split(QDir.separator())[-1])
                 item.setEditable(False)
                 item.setData(f_path, Qt.ItemDataRole.UserRole)
-                self.source_thumbnail_model.appendRow(item)
+                self.ui_manager.source_thumbnail_model.appendRow(item) # ★★★ UIManager経由 ★★★
                 items_for_thread.append(item)
         except Exception as e:
             logger.error(f"サムネイル読み込み準備中にエラー: {e}", exc_info=True)
@@ -658,23 +480,14 @@ class MainWindow(QMainWindow):
             self.thumbnail_loader_thread.start()
         else:
             self.statusBar.showMessage("フォルダに画像がありません", 5000)
+            # ★★★ UI状態変更をUIManagerに委譲 ★★★
+            self.ui_manager.set_thumbnail_loading_ui_state(False)
             self.is_loading_thumbnails = False
-            self.folder_tree_view.setEnabled(True)
-            self.recursive_toggle_button.setEnabled(True)
-            self.deselect_all_button.setEnabled(True)
-            self.select_all_button.setEnabled(True)
-            self.positive_prompt_filter_edit.setEnabled(True)
-            self.negative_prompt_filter_edit.setEnabled(True)
-            self.generation_info_filter_edit.setEnabled(True)
-            # Enable sort toggle buttons
-            for button_id_loop in range(len(self.sort_criteria_map)): # Renamed button_id to avoid conflict
-                if btn := self.sort_button_group.button(button_id_loop):
-                    btn.setEnabled(True)
             self.on_thumbnail_loading_finished() # UI状態をリセットするために呼ぶ
 
     def handle_recursive_search_toggled(self, checked):
         self.recursive_search_enabled = checked
-        self.recursive_toggle_button.setText(f"サブフォルダ検索: {'ON' if checked else 'OFF'}")
+        self.ui_manager.update_recursive_button_text(checked) # ★★★ UIManager経由 ★★★
         logger.info(f"再帰検索設定変更: {'ON' if checked else 'OFF'}. 次回フォルダ読み込み時に適用されます。")
 
     def apply_thumbnail_size_change(self, new_size):
@@ -693,8 +506,7 @@ class MainWindow(QMainWindow):
                 return True
             else:
                 logger.info("再読み込みするフォルダが選択されていません。サイズは次回フォルダ選択時に適用されます。")
-                self.thumbnail_view.setIconSize(QSize(self.current_thumbnail_size, self.current_thumbnail_size))
-                self.thumbnail_view.setGridSize(QSize(self.current_thumbnail_size + 10, self.current_thumbnail_size + 10))
+                self.ui_manager.update_thumbnail_view_sizes() # ★★★ UIManager経由 ★★★
                 return True
         else:
             logger.info("選択されたサイズは現在のサイズと同じため、再読み込みは行いません。")
@@ -745,24 +557,28 @@ class MainWindow(QMainWindow):
 
     def on_thumbnail_loading_finished(self):
         logger.info("サムネイルの非同期読み込みが完了しました。")
-        self.statusBar.showMessage("サムネイル読み込み完了", 5000)
-        self.is_loading_thumbnails = False
-        self.folder_tree_view.setEnabled(True)
-        self.recursive_toggle_button.setEnabled(True)
-        self.deselect_all_button.setEnabled(True)
-        self.select_all_button.setEnabled(True)
-        self.positive_prompt_filter_edit.setEnabled(True)
-        self.negative_prompt_filter_edit.setEnabled(True)
-        self.generation_info_filter_edit.setEnabled(True)
-        self.and_radio_button.setEnabled(True)
-        self.or_radio_button.setEnabled(True)
-        # Enable sort toggle buttons
-        for button_id_loop in range(len(self.sort_criteria_map)): # Renamed button_id to avoid conflict
-            if btn := self.sort_button_group.button(button_id_loop):
-                btn.setEnabled(True)
-        if self.filter_proxy_model:
+
+        if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由でアクセス ★★★
+            # フィルタを先に適用
             self.apply_filters(preserve_selection=True)
+
+            # フィルタ適用後、現在のソート設定でソートを実行
+            logger.info(f"サムネイル読み込み完了。現在のソート設定 (ボタンID: {self.current_sort_button_id}) をモデルに適用します。")
+            # is_loading_thumbnails フラグが False になった状態でソートを実行
+            # _apply_sort_from_toggle_button は is_loading_thumbnails をチェックするので、
+            # フラグを先に倒してから呼び出す。
+
+        # is_loading_thumbnails フラグとUIロックを解除
+        self.is_loading_thumbnails = False 
+        self.ui_manager.set_thumbnail_loading_ui_state(False) # ★★★ UI状態変更をUIManagerに委譲 ★★★
+
+        # ソートを実行 (is_loading_thumbnails が False になった後)
+        if self.ui_manager.filter_proxy_model:
+            self._apply_sort_from_toggle_button(self.current_sort_button_id)
+
         self._update_status_bar_info()
+        self.statusBar.showMessage("サムネイル読み込み完了", 5000)
+
         if self.thumbnail_loader_thread:
             self.thumbnail_loader_thread.deleteLater()
             self.thumbnail_loader_thread = None
@@ -774,9 +590,9 @@ class MainWindow(QMainWindow):
     def handle_thumbnail_selection_changed(self, selected, deselected):
         if self.is_copy_mode:
             selected_items_now_list = []
-            for proxy_idx in self.thumbnail_view.selectionModel().selectedIndexes():
-                source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
-                item = self.source_thumbnail_model.itemFromIndex(source_idx)
+            for proxy_idx in self.ui_manager.thumbnail_view.selectionModel().selectedIndexes(): # ★★★ UIManager経由 ★★★
+                source_idx = self.ui_manager.filter_proxy_model.mapToSource(proxy_idx) # ★★★ UIManager経由 ★★★
+                item = self.ui_manager.source_thumbnail_model.itemFromIndex(source_idx) # ★★★ UIManager経由 ★★★
                 if item:
                     selected_items_now_list.append(item)
             removed_items = [item for item in self.copy_selection_order if item not in selected_items_now_list]
@@ -784,10 +600,10 @@ class MainWindow(QMainWindow):
                 if item_to_remove in self.copy_selection_order:
                     self.copy_selection_order.remove(item_to_remove)
                 item_to_remove.setData(None, SELECTION_ORDER_ROLE)
-                source_idx = self.source_thumbnail_model.indexFromItem(item_to_remove)
-                proxy_idx = self.filter_proxy_model.mapFromSource(source_idx)
+                source_idx = self.ui_manager.source_thumbnail_model.indexFromItem(item_to_remove) # ★★★ UIManager経由 ★★★
+                proxy_idx = self.ui_manager.filter_proxy_model.mapFromSource(source_idx) # ★★★ UIManager経由 ★★★
                 if proxy_idx.isValid():
-                    self.thumbnail_view.update(proxy_idx)
+                    self.ui_manager.thumbnail_view.update(proxy_idx) # ★★★ UIManager経由 ★★★
             newly_selected_items = [item for item in selected_items_now_list if item not in self.copy_selection_order]
             for item_to_add in newly_selected_items:
                 self.copy_selection_order.append(item_to_add)
@@ -812,18 +628,18 @@ class MainWindow(QMainWindow):
                     if item_to_add not in items_to_update_display:
                         items_to_update_display.append(item_to_add)
             for item_to_update in items_to_update_display:
-                source_idx = self.source_thumbnail_model.indexFromItem(item_to_update)
-                proxy_idx = self.filter_proxy_model.mapFromSource(source_idx)
+                source_idx = self.ui_manager.source_thumbnail_model.indexFromItem(item_to_update) # ★★★ UIManager経由 ★★★
+                proxy_idx = self.ui_manager.filter_proxy_model.mapFromSource(source_idx) # ★★★ UIManager経由 ★★★
                 if proxy_idx.isValid():
-                    self.thumbnail_view.update(proxy_idx)
+                    self.ui_manager.thumbnail_view.update(proxy_idx) # ★★★ UIManager経由 ★★★
             logger.debug(f"Copy mode selection order: {[item.data(Qt.ItemDataRole.UserRole) for item in self.copy_selection_order]}")
             self.selected_file_paths = [item.data(Qt.ItemDataRole.UserRole) for item in selected_items_now_list]
         else:
              # --- Normal (Move) Mode Selection Logic ---
             self.selected_file_paths.clear()
-            for proxy_index in self.thumbnail_view.selectionModel().selectedIndexes():
-                source_index = self.filter_proxy_model.mapToSource(proxy_index)
-                item = self.source_thumbnail_model.itemFromIndex(source_index)
+            for proxy_index in self.ui_manager.thumbnail_view.selectionModel().selectedIndexes(): # ★★★ UIManager経由 ★★★
+                source_index = self.ui_manager.filter_proxy_model.mapToSource(proxy_index) # ★★★ UIManager経由 ★★★
+                item = self.ui_manager.source_thumbnail_model.itemFromIndex(source_index) # ★★★ UIManager経由 ★★★
                 if item:
                     file_path = item.data(Qt.ItemDataRole.UserRole)
                     if file_path:
@@ -832,37 +648,45 @@ class MainWindow(QMainWindow):
         self._update_status_bar_info()
 
     def select_all_thumbnails(self):
-        if self.thumbnail_view.model() and self.thumbnail_view.model().rowCount() > 0:
-            self.thumbnail_view.selectAll()
+        if self.ui_manager.thumbnail_view.model() and self.ui_manager.thumbnail_view.model().rowCount() > 0: # ★★★ UIManager経由 ★★★
+            self.ui_manager.thumbnail_view.selectAll() # ★★★ UIManager経由 ★★★
             logger.info("すべての表示中サムネイルを選択しました。")
         else:
             logger.info("選択対象のサムネイルがありません。")
         self._update_status_bar_info()
 
     def deselect_all_thumbnails(self):
-        self.thumbnail_view.clearSelection()
+        self.ui_manager.thumbnail_view.clearSelection() # ★★★ UIManager経由 ★★★
         logger.info("すべてのサムネイルの選択を解除しました。")
         self._update_status_bar_info()
 
     def apply_filters(self, preserve_selection=False):
-        # logger.debug(f"apply_filters called. Preserve selection: {preserve_selection}")
+        # logger.info(f"apply_filters: START - Preserve selection: {preserve_selection}") # 削除
         if not preserve_selection:
+            # logger.info("apply_filters: Calling deselect_all_thumbnails...") # 削除
             self.deselect_all_thumbnails()
-        if self.filter_proxy_model:
-            search_mode = "AND" if self.and_radio_button.isChecked() else "OR"
-            self.filter_proxy_model.set_search_mode(search_mode)
-            # logger.debug(f"Search mode set to: {search_mode}")
-            self.filter_proxy_model.set_positive_prompt_filter(self.positive_prompt_filter_edit.text())
-            # logger.debug(f"Positive prompt filter set to: '{self.positive_prompt_filter_edit.text()}'")
-            self.filter_proxy_model.set_negative_prompt_filter(self.negative_prompt_filter_edit.text())
-            # logger.debug(f"Negative prompt filter set to: '{self.negative_prompt_filter_edit.text()}'")
-            self.filter_proxy_model.set_generation_info_filter(self.generation_info_filter_edit.text())
-            # logger.debug(f"Generation info filter set to: '{self.generation_info_filter_edit.text()}'")
+            # logger.info(f"apply_filters: deselect_all_thumbnails finished in ... seconds.") # 削除
+
+        if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由 ★★★
+            search_mode = "AND" if self.ui_manager.and_radio_button.isChecked() else "OR" # ★★★ UIManager経由 ★★★
+            # logger.info("apply_filters: Setting filter parameters...") # 削除
+            self.ui_manager.filter_proxy_model.set_search_mode(search_mode) # ★★★ UIManager経由 ★★★
+            self.ui_manager.filter_proxy_model.set_positive_prompt_filter(self.ui_manager.positive_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
+            self.ui_manager.filter_proxy_model.set_negative_prompt_filter(self.ui_manager.negative_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
+            self.ui_manager.filter_proxy_model.set_generation_info_filter(self.ui_manager.generation_info_filter_edit.text()) # ★★★ UIManager経由 ★★★
+            # logger.info(f"apply_filters: Filter parameters set in ... seconds.") # 削除
+
             # フィルタ条件設定後、明示的にinvalidateを呼び出して再フィルタリングと再ソートを促す
-            self.filter_proxy_model.invalidate()
+            # logger.info("apply_filters: Calling filter_proxy_model.invalidateFilter()...") # 削除
+            self.ui_manager.filter_proxy_model.invalidateFilter() # ★★★ UIManager経由 ★★★ invalidate() から invalidateFilter() に変更
+            # logger.info(f"apply_filters: filter_proxy_model.invalidateFilter() finished in ... seconds.") # 削除
         else:
             logger.warning("Filter proxy model not yet initialized for apply_filters call.") # Warning level might be appropriate
+
+        # logger.info("apply_filters: Calling _update_status_bar_info...") # 削除
         self._update_status_bar_info()
+        # logger.info(f"apply_filters: _update_status_bar_info finished in ... seconds.") # 削除
+        # logger.info(f"apply_filters: END - Total time: ... seconds.") # 削除
 
     # --- ★★★ START: DropWindow連携メソッド ★★★ ---
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
@@ -870,7 +694,7 @@ class MainWindow(QMainWindow):
     def _open_wc_creator_dialog(self):
         logger.info("ワイルドカード作成ツールを起動します。")
 
-        selected_proxy_indexes = self.thumbnail_view.selectionModel().selectedIndexes()
+        selected_proxy_indexes = self.ui_manager.thumbnail_view.selectionModel().selectedIndexes() # ★★★ UIManager経由 ★★★
         if not selected_proxy_indexes:
             QMessageBox.information(self, "情報", "作成対象の画像をサムネイル一覧から選択してください。")
             return
@@ -878,19 +702,19 @@ class MainWindow(QMainWindow):
         selected_files_for_wc = []
         metadata_for_wc = []
 
-        processed_paths = set()
-
+        processed_paths = set() # 選択されたアイテムの重複処理を避ける
+        
         for proxy_idx in selected_proxy_indexes:
             if proxy_idx.column() == 0:
-                source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
-                item = self.source_thumbnail_model.itemFromIndex(source_idx)
+                source_idx = self.ui_manager.filter_proxy_model.mapToSource(proxy_idx) # ★★★ UIManager経由 ★★★
+                item = self.ui_manager.source_thumbnail_model.itemFromIndex(source_idx) # ★★★ UIManager経由 ★★★
                 if item:
                     file_path = item.data(Qt.ItemDataRole.UserRole)
                     if file_path and file_path not in processed_paths:
                         metadata = item.data(METADATA_ROLE)
                         if not isinstance(metadata, dict):
                             metadata = self.metadata_cache.get(file_path)
-                        if not isinstance(metadata, dict):
+                        if not isinstance(metadata, dict): # キャッシュにもなければ再抽出
                             logger.warning(f"WC Creator用メタデータ: {file_path} のキャッシュが見つからないため、再抽出します。")
                             metadata = extract_image_metadata(file_path)
                             self.metadata_cache[file_path] = metadata
@@ -918,84 +742,104 @@ class MainWindow(QMainWindow):
 
     # --- File Operation Completion Logic (called by FileOperationManager) ---
     def _process_file_op_completion(self, result):
-        # logger.info(f"_process_file_op_completion started. Result: {result}") # 詳細すぎるのでコメントアウト
+        # logger.info(f"_process_file_op_completion: START - Result: {result}") # 削除
         status = result.get('status', 'unknown')
         operation_type = result.get('operation_type', 'unknown')
         if status == 'cancelled':
             self.statusBar.showMessage("ファイル操作がキャンセルされました。", 5000)
+            # logger.info(f"_process_file_op_completion: END - Cancelled. Total time: ... seconds.") # 削除
             return
         errors = result.get('errors', [])
         successfully_moved_src_paths = result.get('successfully_moved_src_paths', []) # For move
         if operation_type == "move":
             moved_count = result.get('moved_count', 0)
             renamed_files = result.get('renamed_files', [])
+            # logger.info(f"_process_file_op_completion: Processing 'move' operation. Moved: {moved_count}, Renamed: {len(renamed_files)}, Errors: {len(errors)}") # 削除
             if moved_count > 0 and successfully_moved_src_paths:
-                 # logger.info(f"Successfully moved {moved_count} files. Updating model.") # コメントアウト
+                 # logger.info(f"_process_file_op_completion: Creating path_to_item_map...") # 削除
                  path_to_item_map = {}
-                 for row in range(self.source_thumbnail_model.rowCount()):
-                     item = self.source_thumbnail_model.item(row)
+                 for row in range(self.ui_manager.source_thumbnail_model.rowCount()): # ★★★ UIManager経由 ★★★
+                     item = self.ui_manager.source_thumbnail_model.item(row) # ★★★ UIManager経由 ★★★
                      if item:
                          item_path = item.data(Qt.ItemDataRole.UserRole)
                          if item_path:
                              path_to_item_map[item_path] = item
-                 # logger.debug(f"path_to_item_map created with {len(path_to_item_map)} entries.")
+                 # logger.info(f"_process_file_op_completion: path_to_item_map created in ... seconds. Size: {len(path_to_item_map)}") # 削除
+                 # logger.info(f"_process_file_op_completion: Collecting and sorting items_to_remove_from_model...") # 削除
                  items_to_remove_from_model = []
                  for path_to_remove in successfully_moved_src_paths:
                      item_to_remove = path_to_item_map.get(path_to_remove)
                      if item_to_remove:
                          items_to_remove_from_model.append(item_to_remove)
                      else:
-                         logger.warning(f"Moved path {path_to_remove} not found in source model's path_to_item_map for removal.")
-                 items_to_remove_from_model.sort(key=lambda x: x.row() if x and x.model() == self.source_thumbnail_model else -1, reverse=True)
-                 # logger.debug(f"Found {len(items_to_remove_from_model)} items to remove from model.")
-
+                         logger.warning(f"_process_file_op_completion: Moved path {path_to_remove} not found in source model's path_to_item_map for removal.")
+                 items_to_remove_from_model.sort(key=lambda x: x.row() if x and x.model() == self.ui_manager.source_thumbnail_model else -1, reverse=True) # ★★★ UIManager経由 ★★★
+                 # logger.info(f"_process_file_op_completion: items_to_remove_from_model collected and sorted in ... seconds. Count: {len(items_to_remove_from_model)}") # 削除
                  # --- 選択変更シグナルを一時的にブロック ---
+                 # logger.info(f"_process_file_op_completion: Disconnecting selectionChanged signal...") # 削除
                  try:
-                     self.thumbnail_view.selectionModel().selectionChanged.disconnect(self.handle_thumbnail_selection_changed)
-                     # logger.debug("selectionChanged signal disconnected.")
+                     self.ui_manager.thumbnail_view.selectionModel().selectionChanged.disconnect(self.handle_thumbnail_selection_changed) # ★★★ UIManager経由 ★★★
+                     # logger.info(f"_process_file_op_completion: selectionChanged signal disconnected in ... seconds.") # 削除
                  except TypeError:
                      logger.warning("selectionChanged signal was not connected, cannot disconnect.")
                  # --- シグナルブロック終わり ---
-
                  # 削除対象の行番号リストを作成 (降順になっているはず)
                  rows_to_delete_indices = []
                  for item_to_remove_instance in items_to_remove_from_model:
-                     if item_to_remove_instance and item_to_remove_instance.model() == self.source_thumbnail_model:
+                     if item_to_remove_instance and item_to_remove_instance.model() == self.ui_manager.source_thumbnail_model: # ★★★ UIManager経由 ★★★
                          rows_to_delete_indices.append(item_to_remove_instance.row())
                      elif item_to_remove_instance:
-                         logger.warning(f"Item for path {item_to_remove_instance.data(Qt.ItemDataRole.UserRole)} is no longer in the expected model or is invalid, skipping removal.")
-                 
-                 self.thumbnail_view.setUpdatesEnabled(False) # ★ ビューの更新を一時的に無効化
-
+                         logger.warning(f"_process_file_op_completion: Item for path {item_to_remove_instance.data(Qt.ItemDataRole.UserRole)} is no longer in the expected model or is invalid, skipping removal.")
+                 # logger.info(f"_process_file_op_completion: Disabling thumbnail_view updates...") # 削除
+                 self.ui_manager.thumbnail_view.setUpdatesEnabled(False) # ★ ビューの更新を一時的に無効化 ★★★ UIManager経由 ★★★
+                 # logger.info(f"_process_file_op_completion: thumbnail_view updates disabled in ... seconds.") # 削除
                  if rows_to_delete_indices:
-                     # logger.debug(f"Source model rowCount before removal: {self.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.filter_proxy_model.rowCount()}")
+                     # logger.info(f"_process_file_op_completion: Starting item removal loop for {len(rows_to_delete_indices)} rows. Source model rowCount before: {self.ui_manager.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.ui_manager.filter_proxy_model.rowCount()}") # 削除
+                     num_removed_successfully = 0
+
+                     # --- モデルの大幅な変更を通知 ---
+                     # logger.info("_process_file_op_completion: Emitting layoutAboutToBeChanged.") # 削除
+                     self.ui_manager.source_thumbnail_model.layoutAboutToBeChanged.emit()
+                     # ---------------------------------
+
                      for row_num in rows_to_delete_indices:
+                         # logger.debug(f"_process_file_op_completion: Removing row {row_num}...")
+                         # start_time_remove_row = time.time()
                          # QModelIndex() は親がないトップレベルアイテムを示す
-                         self.source_thumbnail_model.beginRemoveRows(QModelIndex(), row_num, row_num)
-                         removed = self.source_thumbnail_model.removeRow(row_num)
-                         self.source_thumbnail_model.endRemoveRows()
+                         # self.ui_manager.source_thumbnail_model.beginRemoveRows(QModelIndex(), row_num, row_num) # ★ 変更: layoutAboutToBeChanged/layoutChanged を使うためコメントアウト
+                         removed = self.ui_manager.source_thumbnail_model.removeRow(row_num) # ★★★ UIManager経由 ★★★
+                         # self.ui_manager.source_thumbnail_model.endRemoveRows() # ★ 変更: layoutAboutToBeChanged/layoutChanged を使うためコメントアウト
                          if removed:
-                             pass # logger.debug(f"Successfully removed row {row_num} from source model.")
+                             num_removed_successfully +=1
+                             # logger.debug(f"_process_file_op_completion: Successfully removed row {row_num} from source model in {time.time() - start_time_remove_row:.4f} seconds.")
                          else:
-                             logger.warning(f"Failed to remove row {row_num} from source model.")                         
-                     # logger.debug(f"Source model rowCount after removal: {self.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.filter_proxy_model.rowCount()}")
-              
+                             logger.warning(f"_process_file_op_completion: Failed to remove row {row_num} from source model.")
+                     # --- モデルの変更完了を通知 ---
+                     # logger.info("_process_file_op_completion: Emitting layoutChanged.") # 削除
+                     self.ui_manager.source_thumbnail_model.layoutChanged.emit()
+                     # -----------------------------
+                     # logger.info(f"_process_file_op_completion: Item removal loop finished in ... seconds. Successfully removed: {num_removed_successfully} items.") # 削除
+                     # logger.info(f"_process_file_op_completion: Source model rowCount after removal: {self.ui_manager.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.ui_manager.filter_proxy_model.rowCount()}") # 削除
                  # --- 選択変更シグナルを再接続し、手動でハンドラを呼び出す ---
-                 self.thumbnail_view.selectionModel().selectionChanged.connect(self.handle_thumbnail_selection_changed)
-                 # logger.debug("selectionChanged signal reconnected.")
+                 # logger.info(f"_process_file_op_completion: Reconnecting selectionChanged signal...") # 削除
+                 self.ui_manager.thumbnail_view.selectionModel().selectionChanged.connect(self.handle_thumbnail_selection_changed) # ★★★ UIManager経由 ★★★
+                 # logger.info(f"_process_file_op_completion: selectionChanged signal reconnected in ... seconds.") # 削除
+                 # logger.info(f"_process_file_op_completion: Calling handle_thumbnail_selection_changed manually...") # 削除
                  # モデル変更後に選択状態が自動的に更新されるが、ハンドラは呼ばれない可能性があるため手動で呼ぶ
                  self.handle_thumbnail_selection_changed(QItemSelection(), QItemSelection()) # 空の選択変更としてハンドラをトリガー
                  self.selected_file_paths.clear()
-                 
+                 # logger.info(f"_process_file_op_completion: handle_thumbnail_selection_changed finished in ... seconds.") # 削除
                  # ★★★ ファイル移動後、フィルタを再適用してビューを更新 ★★★
-                 # logger.debug("Processing events before applying filters post-move.")
+                 # logger.info(f"_process_file_op_completion: Processing UI events before enabling updates...") # 削除
                  QApplication.processEvents() # UIイベント処理を挟む
-                 # logger.info("Applying filters after move operation to refresh view.") # INFOレベルなので残しても良いが、一時的になくす
-                 self.thumbnail_view.setUpdatesEnabled(True) # ★ ビューの更新を有効化
+                 # logger.info(f"_process_file_op_completion: Enabling thumbnail_view updates...") # 削除
+                 self.ui_manager.thumbnail_view.setUpdatesEnabled(True) # ★ ビューの更新を有効化 ★★★ UIManager経由 ★★★
+                 # logger.info(f"_process_file_op_completion: thumbnail_view updates enabled in ... seconds.") # 削除
+                 # logger.info(f"_process_file_op_completion: Calling apply_filters...") # 削除
                  # apply_filters の前に True に戻すか、後にするかは挙動を見て調整
                  self.apply_filters(preserve_selection=True) # preserve_selection=True で現在の選択を維持しようと試みる (実際にはクリアされるが)
-                 # _update_status_bar_info() は handle_thumbnail_selection_changed 内で呼ばれる
-                 self._update_status_bar_info()
+                 # logger.info(f"_process_file_op_completion: apply_filters finished in ... seconds.") # 削除
+                 self._update_status_bar_info() # _update_status_bar_info() は handle_thumbnail_selection_changed 内でも呼ばれるが、ここでも呼ぶ
             if renamed_files:
                 dialog = RenamedFilesDialog(renamed_files, self)
                 dialog.exec()
@@ -1008,6 +852,7 @@ class MainWindow(QMainWindow):
             elif errors and moved_count == 0:
                  self.statusBar.showMessage("ファイルの移動に失敗しました。", 3000)
         elif operation_type == "copy":
+            # logger.info(f"_process_file_op_completion: Processing 'copy' operation. Result: {result}") # 削除
             copied_count = result.get('copied_count', 0)
             if errors:
                 QMessageBox.warning(self, "コピーエラー", "以下のエラーが発生しました:\n" + "\n".join(errors))
@@ -1016,19 +861,19 @@ class MainWindow(QMainWindow):
             elif not errors:
                 self.statusBar.showMessage("コピーするファイルがありませんでした、または処理が完了しました。", 3000)
         if status == 'completed' and not errors:
+            # logger.info(f"_process_file_op_completion: Operation '{operation_type}' completed without errors. Deselecting thumbnails.") # 削除
             self.deselect_all_thumbnails()
             if operation_type == "copy":
                 for item_in_order in self.copy_selection_order:
                     if item_in_order.data(SELECTION_ORDER_ROLE) is not None:
                         item_in_order.setData(None, SELECTION_ORDER_ROLE)
-                        source_idx = self.source_thumbnail_model.indexFromItem(item_in_order)
-                        proxy_idx = self.filter_proxy_model.mapFromSource(source_idx)
+                        source_idx = self.ui_manager.source_thumbnail_model.indexFromItem(item_in_order) # ★★★ UIManager経由 ★★★
+                        proxy_idx = self.ui_manager.filter_proxy_model.mapFromSource(source_idx) # ★★★ UIManager経由 ★★★
                         if proxy_idx.isValid():
-                            self.thumbnail_view.update(proxy_idx)
+                            self.ui_manager.thumbnail_view.update(proxy_idx) # ★★★ UIManager経由 ★★★
                 self.copy_selection_order.clear()
             # ★★★ ファイル移動完了後の自動的な空フォルダ削除処理を削除 ★★★
-
-        # logger.info("_process_file_op_completion finished.") # 詳細すぎるのでコメントアウト
+        # logger.info(f"_process_file_op_completion: END - Total time: ... seconds.") # 削除
 
     def _try_delete_empty_subfolders(self, target_folder_path):
         if not target_folder_path or not os.path.isdir(target_folder_path):
@@ -1094,8 +939,8 @@ class MainWindow(QMainWindow):
                         self.update_folder_tree(parent_folder_path_for_context)
                     elif not os.path.exists(parent_folder_path_for_context) and successful_sends :
                         logger.info(f"スキャン対象フォルダ '{parent_folder_path_for_context}' が削除されたため、ツリーのルートをクリアします。")
-                        self.file_system_model.setRootPath("")
-                        self.source_thumbnail_model.clear()
+                        self.ui_manager.file_system_model.setRootPath("") # ★★★ UIManager経由 ★★★
+                        self.ui_manager.source_thumbnail_model.clear() # ★★★ UIManager経由 ★★★
                         if self.current_folder_path == parent_folder_path_for_context:
                             self.current_folder_path = None
         else:
@@ -1157,8 +1002,33 @@ class MainWindow(QMainWindow):
         logger.info("アプリケーションを終了します。")
         super().closeEvent(event)
 
+    def resizeEvent(self, event: QCloseEvent): # QResizeEvent の方が適切ですが、既存の型ヒントを維持します
+        """ウィンドウリサイズ時に左パネルのオーバーレイウィジェットのサイズを調整し、
+        左パネルの最大幅を固定値に設定する。
+        """
+        super().resizeEvent(event)
+
+        # --- 左パネルの最大幅をウィンドウリサイズ時に350pxに設定 ---
+        if self.ui_manager.left_panel_widget_ref:
+            self.ui_manager.left_panel_widget_ref.setMaximumWidth(350)
+            # logger.debug("Window resized, left panel max width set to 350.") # 頻繁に出力されるためコメントアウト
+
+        # 左パネルのオーバーレイウィジェットが有効（表示中）であれば、
+        # 左パネルの現在のサイズに合わせてオーバーレイのサイズも更新する
+        if hasattr(self.ui_manager, 'left_panel_overlay_widget') and \
+           self.ui_manager.left_panel_overlay_widget and self.ui_manager.left_panel_widget_ref and \
+           self.ui_manager.left_panel_overlay_widget.isVisible():
+            self.ui_manager.left_panel_overlay_widget.setGeometry(self.ui_manager.left_panel_widget_ref.rect())
+
+    def handle_splitter_moved(self, pos: int, index: int):
+        """スプリッターがユーザーによってドラッグされたときに呼び出され、左パネルの最大幅制限を解除する。"""
+        if self.ui_manager.left_panel_widget_ref:
+            # QWIDGETSIZE_MAX の代わりに大きな整数値を設定
+            self.ui_manager.left_panel_widget_ref.setMaximumWidth(16777215) # 実質無制限
+            logger.debug(f"Splitter moved by user. Left panel max width unrestricted. Pos: {pos}, Index: {index}")
+
     def _show_thumbnail_context_menu(self, pos):
-        proxy_index = self.thumbnail_view.indexAt(pos)
+        proxy_index = self.ui_manager.thumbnail_view.indexAt(pos) # ★★★ UIManager経由 ★★★
         if not proxy_index.isValid():
             return
         if self.thumbnail_right_click_action == RIGHT_CLICK_ACTION_METADATA:
@@ -1171,7 +1041,7 @@ class MainWindow(QMainWindow):
             open_location_action = QAction("ファイルの場所を開く", self)
             open_location_action.triggered.connect(lambda: self._open_file_location_for_item(proxy_index))
             menu.addAction(open_location_action)
-            menu.exec(self.thumbnail_view.viewport().mapToGlobal(pos))
+            menu.exec(self.ui_manager.thumbnail_view.viewport().mapToGlobal(pos)) # ★★★ UIManager経由 ★★★
         else:
             logger.warning(f"不明なサムネイル右クリック動作設定: {self.thumbnail_right_click_action}")
             self.dialog_manager.open_metadata_dialog(proxy_index) # DialogManager経由で呼び出し
@@ -1180,8 +1050,8 @@ class MainWindow(QMainWindow):
         if not proxy_index.isValid():
             logger.warning("ファイルの場所を開く操作が、無効なインデックスで呼び出されました。")
             return
-        source_index = self.filter_proxy_model.mapToSource(proxy_index)
-        item = self.source_thumbnail_model.itemFromIndex(source_index)
+        source_index = self.ui_manager.filter_proxy_model.mapToSource(proxy_index) # ★★★ UIManager経由 ★★★
+        item = self.ui_manager.source_thumbnail_model.itemFromIndex(source_index) # ★★★ UIManager経由 ★★★
         if not item:
              logger.warning(f"ファイルの場所を開く操作: インデックスからアイテムを取得できませんでした...")
              return

@@ -51,10 +51,12 @@ class TestThumbnailLoaderThread(unittest.TestCase):
         mock_pil_img.convert.return_value = mock_pil_img # For .convert("RGBA")
         mock_image_open.return_value = mock_pil_img
         
+        # _process_single_image は常に extract_image_metadata を呼び出すため、
+        # self.file_paths の数だけ結果を用意する
         mock_extract_metadata.side_effect = [
-            {"positive_prompt": "meta1"},
-            {"positive_prompt": "meta2"},
-            {"positive_prompt": "meta3_error_case"} # Even if open fails, extract might be called with path
+            {"positive_prompt": "meta1", 'filename_for_sort': 'item1.jpg', 'update_timestamp': 0.0},
+            {"positive_prompt": "meta2", 'filename_for_sort': 'item2.png', 'update_timestamp': 0.0},
+            {"positive_prompt": "meta3_error_case", 'filename_for_sort': 'error_item.gif', 'update_timestamp': 0.0}
         ]
 
         thread = ThumbnailLoaderThread(self.file_paths, self.items_to_process, self.target_size)
@@ -72,9 +74,9 @@ class TestThumbnailLoaderThread(unittest.TestCase):
 
         # Verify each expected item was processed and signaled correctly, regardless of order.
         expected_results_map = {
-            self.mock_item1.text(): (False if ImageQt else True, {"positive_prompt": "meta1"}),
-            self.mock_item2.text(): (False if ImageQt else True, {"positive_prompt": "meta2"}),
-            self.mock_item3.text(): (False if ImageQt else True, {"positive_prompt": "meta3_error_case"}),
+            self.mock_item1.text(): (False if ImageQt else True, {"positive_prompt": "meta1", 'filename_for_sort': 'item1.jpg', 'update_timestamp': 0.0}),
+            self.mock_item2.text(): (False if ImageQt else True, {"positive_prompt": "meta2", 'filename_for_sort': 'item2.png', 'update_timestamp': 0.0}),
+            self.mock_item3.text(): (False if ImageQt else True, {"positive_prompt": "meta3_error_case", 'filename_for_sort': 'error_item.gif', 'update_timestamp': 0.0}),
         }
         
         processed_item_texts = set()
@@ -118,10 +120,11 @@ class TestThumbnailLoaderThread(unittest.TestCase):
             FileNotFoundError("Mocked FileNotFoundError for item2.png"),
             mock_pil_img_ok
         ]
+        # extract_image_metadata は常に呼ばれるので、3つの結果を用意する
         mock_extract_metadata.side_effect = [
-            {"positive_prompt": "meta1"}, # For item1.jpg
-            # For item2.png, extract_image_metadata should not be called due to FileNotFoundError
-            {"positive_prompt": "meta3"}
+            {"positive_prompt": "meta1", 'filename_for_sort': 'item1.jpg', 'update_timestamp': 0.0},
+            {'positive_prompt': '', 'negative_prompt': '', 'generation_info': '', 'filename_for_sort': 'item2.png', 'update_timestamp': 0.0}, # FileNotFoundError時のデフォルトメタ
+            {"positive_prompt": "meta3", 'filename_for_sort': 'error_item.gif', 'update_timestamp': 0.0}
         ]
 
         thread = ThumbnailLoaderThread(self.file_paths, self.items_to_process, self.target_size)
@@ -135,9 +138,9 @@ class TestThumbnailLoaderThread(unittest.TestCase):
 
         # Verify each expected item was processed and signaled correctly.
         expected_results_map = {
-            self.mock_item1.text(): (False if ImageQt else True, {"positive_prompt": "meta1"}),
-            self.mock_item2.text(): (True, {'positive_prompt': '', 'negative_prompt': '', 'generation_info': ''}), # FileNotFoundError
-            self.mock_item3.text(): (False if ImageQt else True, {"positive_prompt": "meta3"}),
+            self.mock_item1.text(): (False if ImageQt else True, {"positive_prompt": "meta1", 'filename_for_sort': 'item1.jpg', 'update_timestamp': 0.0}),
+            self.mock_item2.text(): (True, {'positive_prompt': '', 'negative_prompt': '', 'generation_info': '', 'filename_for_sort': 'item2.png', 'update_timestamp': 0.0}), # FileNotFoundError
+            self.mock_item3.text(): (False if ImageQt else True, {"positive_prompt": "meta3", 'filename_for_sort': 'error_item.gif', 'update_timestamp': 0.0}),
         }
 
         processed_item_texts = set()

@@ -1,7 +1,7 @@
 # src/dialog_manager.py
 import logging
 import os
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QByteArray
 from PyQt6.QtWidgets import QMessageBox, QApplication, QDialog
 
 from .settings_dialog import SettingsDialog
@@ -10,8 +10,10 @@ from .image_metadata_dialog import ImageMetadataDialog
 from .wc_creator_dialog import WCCreatorDialog
 from .drop_window import DropWindow
 from .constants import (
-    APP_SETTINGS_FILE, THUMBNAIL_RIGHT_CLICK_ACTION,
-    WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, Qt as ConstantsQt # Renamed Qt from constants to avoid clash
+    APP_SETTINGS_FILE,
+    THUMBNAIL_RIGHT_CLICK_ACTION,
+    WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
+    Qt as ConstantsQt # Renamed Qt from constants to avoid clash
 )
 # Qt from QtCore is used for Qt.ItemDataRole etc.
 # ConstantsQt might be used if constants.py defines its own Qt related values, but likely not needed here.
@@ -36,6 +38,7 @@ class DialogManager:
                 current_preview_mode=self.main_window.image_preview_mode,
                 current_right_click_action=self.main_window.thumbnail_right_click_action,
                 current_wc_comment_format=self.main_window.wc_creator_comment_format,
+                current_delete_empty_folders_setting=self.main_window.delete_empty_folders_enabled, # ★★★ 追加 ★★★
                 parent=self.main_window
             )
 
@@ -54,6 +57,11 @@ class DialogManager:
             if self.main_window.wc_creator_comment_format != new_wc_comment_format:
                 self.main_window.wc_creator_comment_format = new_wc_comment_format
                 logger.info(f"WC Creator コメント形式が変更されました: {self.main_window.wc_creator_comment_format}")
+
+            new_delete_empty_folders_setting = self.settings_dialog_instance.get_selected_delete_empty_folders_setting() # ★★★ 追加 ★★★
+            if self.main_window.delete_empty_folders_enabled != new_delete_empty_folders_setting: # ★★★ 追加 ★★★
+                self.main_window.delete_empty_folders_enabled = new_delete_empty_folders_setting # ★★★ 追加 ★★★
+                logger.info(f"空フォルダ削除設定が変更されました: {'有効' if self.main_window.delete_empty_folders_enabled else '無効'}") # ★★★ 追加 ★★★
 
             new_size = self.settings_dialog_instance.get_selected_thumbnail_size()
             reply_ok_for_size_change = True # Assume OK if no confirmation needed or confirmed
@@ -85,6 +93,7 @@ class DialogManager:
 
             self.main_window.app_settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.main_window.thumbnail_right_click_action
             self.main_window.app_settings[WC_COMMENT_OUTPUT_FORMAT] = self.main_window.wc_creator_comment_format
+            self.main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
             self.main_window._write_app_settings_file()
         self.settings_dialog_instance = None
 
@@ -92,8 +101,8 @@ class DialogManager:
     def open_full_image_dialog(self, proxy_index):
         """サムネイルのダブルクリックに応じてFullImageDialogを開くまたは更新する。"""
         if not proxy_index.isValid(): return
-        source_index = self.main_window.filter_proxy_model.mapToSource(proxy_index)
-        item = self.main_window.source_thumbnail_model.itemFromIndex(source_index)
+        source_index = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_index) # ★★★ UIManager経由 ★★★
+        item = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_index) # ★★★ UIManager経由 ★★★
         if not item: return
         file_path = item.data(Qt.ItemDataRole.UserRole)
         if not file_path: return
@@ -101,10 +110,10 @@ class DialogManager:
         logger.info(f"FullImageDialog表示要求: {file_path}")
 
         visible_image_paths = []
-        for row in range(self.main_window.filter_proxy_model.rowCount()):
-            proxy_idx_loop = self.main_window.filter_proxy_model.index(row, 0)
-            source_idx_loop = self.main_window.filter_proxy_model.mapToSource(proxy_idx_loop)
-            item_loop = self.main_window.source_thumbnail_model.itemFromIndex(source_idx_loop)
+        for row in range(self.main_window.ui_manager.filter_proxy_model.rowCount()): # ★★★ UIManager経由 ★★★
+            proxy_idx_loop = self.main_window.ui_manager.filter_proxy_model.index(row, 0) # ★★★ UIManager経由 ★★★
+            source_idx_loop = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_idx_loop) # ★★★ UIManager経由 ★★★
+            item_loop = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_idx_loop) # ★★★ UIManager経由 ★★★
             if item_loop:
                 visible_image_paths.append(item_loop.data(Qt.ItemDataRole.UserRole))
 
@@ -149,8 +158,8 @@ class DialogManager:
         if not proxy_index.isValid():
             logger.debug("open_metadata_dialog: 無効なプロキシインデックスを受け取りました。")
             return
-        source_index = self.main_window.filter_proxy_model.mapToSource(proxy_index)
-        item = self.main_window.source_thumbnail_model.itemFromIndex(source_index)
+        source_index = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_index) # ★★★ UIManager経由 ★★★
+        item = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_index) # ★★★ UIManager経由 ★★★
         if not item:
             logger.debug(f"open_metadata_dialog: ソースインデックス {source_index.row()},{source_index.column()} からアイテムを取得できませんでした。")
             return
@@ -181,12 +190,15 @@ class DialogManager:
             self.metadata_dialog_instance = ImageMetadataDialog(metadata_dict, self.main_window, item_file_path_for_debug)
             self.metadata_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self.metadata_dialog_instance.finished.connect(self._on_metadata_dialog_finished)
-            if self.main_window.metadata_dialog_last_geometry:
-                 try:
-                     screen_rect = QApplication.primaryScreen().availableGeometry()
-                     if screen_rect.intersects(self.main_window.metadata_dialog_last_geometry):
-                         self.metadata_dialog_instance.setGeometry(self.main_window.metadata_dialog_last_geometry)
-                 except Exception: logger.warning("スクリーンジオメトリを取得できませんでした。最後のダイアログジオメトリをチェックなしで復元します。")
+            if self.main_window.metadata_dialog_last_geometry and isinstance(self.main_window.metadata_dialog_last_geometry, QByteArray):
+                try:
+                    # QByteArrayからQRectに変換して、画面内に収まるかチェックする方がより安全だが、
+                    # restoreGeometryは通常、無効なジオメトリをある程度ハンドルする。
+                    # ここでは直接restoreGeometryを試みる。
+                    self.metadata_dialog_instance.restoreGeometry(self.main_window.metadata_dialog_last_geometry)
+                    logger.debug(f"メタデータダイアログのジオメトリを復元しました。")
+                except Exception as e:
+                    logger.warning(f"メタデータダイアログのジオメトリ復元中にエラー: {e}。デフォルト位置で表示します。")
             self.metadata_dialog_instance.show()
         else:
             self.metadata_dialog_instance.update_metadata(metadata_dict, item_file_path_for_debug)
@@ -199,10 +211,9 @@ class DialogManager:
         # self.sender()ではなく、インスタンス変数を直接比較・クリアする
         if self.metadata_dialog_instance: # インスタンスが存在する場合のみ
              # sender_dialog = self.main_window.sender() # これは不要
-             # if sender_dialog == self.metadata_dialog_instance: # これも不要
             if isinstance(self.metadata_dialog_instance, QDialog): # 型チェックは念のため
-                 self.main_window.metadata_dialog_last_geometry = self.metadata_dialog_instance.geometry()
-                 logger.debug(f"メタデータダイアログが閉じられました。ジオメトリを保存しました: {self.main_window.metadata_dialog_last_geometry}")
+                self.main_window.metadata_dialog_last_geometry = self.metadata_dialog_instance.saveGeometry()
+                logger.debug(f"メタデータダイアログが閉じられました。ジオメトリ(QByteArray)を保存しました。")
             self.metadata_dialog_instance = None
 
 
@@ -247,20 +258,20 @@ class DialogManager:
     def open_wc_creator_dialog(self):
         """ワイルドカード作成ダイアログを開く。"""
         logger.info("ワイルドカード作成ツールを起動します。")
-
-        selected_proxy_indexes = self.main_window.thumbnail_view.selectionModel().selectedIndexes()
+        # thumbnail_view は UIManager が持つ
+        selected_proxy_indexes = self.main_window.ui_manager.thumbnail_view.selectionModel().selectedIndexes()
         if not selected_proxy_indexes:
             QMessageBox.information(self.main_window, "情報", "作成対象の画像をサムネイル一覧から選択してください。")
             return
 
         selected_files_for_wc = []
         metadata_for_wc = []
-        processed_paths = set()
-
+        processed_paths = set() # 選択されたアイテムの重複処理を避ける
+        
         for proxy_idx in selected_proxy_indexes:
             if proxy_idx.column() == 0:
-                source_idx = self.main_window.filter_proxy_model.mapToSource(proxy_idx)
-                item = self.main_window.source_thumbnail_model.itemFromIndex(source_idx)
+                source_idx = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_idx) # ★★★ UIManager経由 ★★★
+                item = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_idx) # ★★★ UIManager経由 ★★★
                 if item:
                     file_path = item.data(Qt.ItemDataRole.UserRole)
                     if file_path and file_path not in processed_paths:
