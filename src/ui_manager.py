@@ -80,13 +80,15 @@ class UIManager:
         self.left_panel_overlay_widget.hide() # 初期状態は非表示
         # サイズと位置は set_ui_locked で調整
 
+        # ファイル操作ボタンの初期状態設定 (コピーモードに応じて)
+        self.set_file_op_buttons_enabled_ui(True)
+
         # Right panel (Thumbnail view)
         right_panel = self._create_right_panel()
         self.splitter.addWidget(right_panel)
 
         self.splitter.setSizes([300, 900]) # 初期サイズ
         main_layout.addWidget(self.splitter)
-
     def _create_left_panel(self):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
@@ -268,8 +270,17 @@ class UIManager:
         if self.copy_mode_button:
             self.copy_mode_button.setText(f"Copy Mode: {'ON' if checked else 'OFF'}")
 
+    def set_sort_buttons_enabled(self, enabled: bool):
+        """ソート関連のボタン群の有効/無効を切り替える。"""
+        if self.sort_button_group:
+            for button in self.sort_button_group.buttons():
+                button.setEnabled(enabled)
+        # logger.debug(f"Sort buttons enabled state set to: {enabled}")
+
     def set_ui_locked(self, locked: bool):
-        """指定された状態に基づいて左パネルUIをロック/アンロックする。"""
+        """指定された状態に基づいて左パネルUIをオーバーレイでロック/アンロックする。
+        サムネイル読み込みなど、比較的時間がかかる操作に使用する。
+        """
         if self.left_panel_overlay_widget and self.left_panel_widget_ref:
             if locked:
                 # left_panel_overlay_widget を left_panel_widget_ref のサイズに合わせ、最前面に表示
@@ -281,26 +292,21 @@ class UIManager:
         logger.debug(f"Left Panel UI Lock state set to: {locked}")
 
     def set_file_op_buttons_enabled_ui(self, enabled):
-        # 左パネル全体をロック/アンロック
-        self.set_ui_locked(not enabled)
-        # ロックが解除されたときに、コピーモードに応じてボタンの状態を再設定
-        if enabled:
-            if self.move_files_button: self.move_files_button.setEnabled(not self.mw.is_copy_mode)
-            if self.copy_files_button: self.copy_files_button.setEnabled(self.mw.is_copy_mode)
-            if self.copy_mode_button: self.copy_mode_button.setEnabled(True)
-            # folder_select_button と folder_tree_view はオーバーレイでカバーされるため、
-            # 個別の有効/無効制御は不要になります。
-            # ただし、オーバーレイが解除されたときに folder_select_button は常に有効であるべきなので、
-            # 必要であればここで self.folder_select_button.setEnabled(True) を追加できます。
-            # folder_tree_view はオーバーレイで制御されるので、ここでは何もしません。
-        else: # ロック時 (enabled = False)
-            # ロック時には、ファイル操作ボタンも無効化されているべきです。
-            # set_ui_locked(True) が呼ばれるので、オーバーレイが表示されます。
-            # 個別のボタン制御は、ロック解除時に復元されるため、ここでは不要です。
-            pass
+        """ファイル操作に関連するボタン（移動、コピー、コピーモード切替）の有効/無効を切り替える。
+        左パネル全体のロック（オーバーレイ）とは独立して制御される。
+        """
+        if self.move_files_button: self.move_files_button.setEnabled(enabled and not self.mw.is_copy_mode)
+        if self.copy_files_button: self.copy_files_button.setEnabled(enabled and self.mw.is_copy_mode)
+        if self.copy_mode_button: self.copy_mode_button.setEnabled(enabled)
+        logger.debug(f"File operation buttons enabled state set to: {enabled} (considering copy mode: {self.mw.is_copy_mode})")
 
     def set_thumbnail_loading_ui_state(self, loading: bool):
+        """サムネイル読み込み中のUI状態を設定する。
+        左パネル全体をオーバーレイでロック/アンロックし、ファイル操作ボタンも無効化/有効化する。
+        """
         self.set_ui_locked(loading)
+        # サムネイル読み込み中はファイル操作ボタンも無効化するのが自然
+        self.set_file_op_buttons_enabled_ui(not loading)
 
     def update_thumbnail_view_sizes(self):
         if self.thumbnail_view:

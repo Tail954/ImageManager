@@ -291,8 +291,10 @@ class TestMainWindowThumbnailUpdatesAndFilters(TestMainWindowBase):
         self.assertFalse(self.window.is_loading_thumbnails)
         self.window.ui_manager.set_thumbnail_loading_ui_state.assert_called_with(False) # ★★★ UIManager経由 ★★★
         self.window.apply_filters.assert_called_once_with(preserve_selection=True)
-        # statusBar.showMessage が正しい引数で呼ばれたか確認
-        self.window.statusBar.showMessage.assert_called_with("表示アイテム数: 10 / 選択アイテム数: 0")
+        # _update_status_bar_info() によって '表示アイテム数: ...' が呼ばれたことを確認
+        self.window.statusBar.showMessage.assert_any_call("表示アイテム数: 10 / 選択アイテム数: 0")
+        # その後、'サムネイル読み込み完了' が呼ばれたことを確認 (これが最後の呼び出しになるはず)
+        self.window.statusBar.showMessage.assert_called_with("サムネイル読み込み完了", 5000)
 
     def test_apply_filters(self):
         # UI要素はUIManagerのモック経由で設定

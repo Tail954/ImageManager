@@ -133,13 +133,17 @@ class MainWindow(QMainWindow):
 
     def _apply_initial_sort_from_settings(self):
         """アプリケーション起動時に設定からソートを適用する"""
+        # このメソッドはUIの初期状態を設定する役割。
+        # setChecked(True) が _apply_sort_from_toggle_button をトリガーするが、
+        # _apply_sort_from_toggle_button 側で読み込み中やモデル空の状態をハンドルする。
         button_to_check = self.ui_manager.sort_button_group.button(self.current_sort_button_id) # ★★★ UIManager経由 ★★★
         if button_to_check:
             button_to_check.setChecked(True) # これにより _apply_sort_from_toggle_button がトリガーされる
+            logger.info(f"初期ソートUI状態をボタンID {self.current_sort_button_id} に設定しました。実際のソートはデータ読み込み後です。")
         else: # フォールバック
             logger.warning(f"初期ソートボタンID {self.current_sort_button_id} が無効です。デフォルトのファイル名昇順を適用します。")
             self.current_sort_button_id = 0 # ID 0 (ファイル名 ↑) にリセット
-            if default_button := self.sort_button_group.button(0):
+            if default_button := self.ui_manager.sort_button_group.button(0): # UIManager経由
                 default_button.setChecked(True)
 
     def _apply_sort_from_toggle_button(self, button_id: int):
@@ -149,21 +153,42 @@ class MainWindow(QMainWindow):
             return
 
         self.current_sort_button_id = button_id # 現在のソート状態を更新
+
+        if self.is_loading_thumbnails:
+            logger.info(f"ソートボタン {button_id} がクリックされましたが、サムネイル読み込み中です。設定のみ更新し、ソートは読み込み完了後に行われます。")
+            return
+
+        if self.ui_manager.source_thumbnail_model.rowCount() == 0 and not self.is_loading_thumbnails:
+            logger.info("_apply_sort_from_toggle_button: Source model is empty and not loading. Sort will have no effect.")
+            # ステータスバー更新は行っても良い
+            self._update_status_bar_info()
+            return
+
+        self.current_sort_button_id = button_id # 現在のソート状態を更新
         selected_criteria = self.sort_criteria_map.get(self.current_sort_button_id)
 
-        if selected_criteria:
-            key_type = selected_criteria["key_type"]
-            sort_order = selected_criteria["order"]
-            
-            logger.info(f"Applying sort. Button ID: {button_id}, Criteria: '{selected_criteria['name']}', Key Type: {key_type}, Order: {sort_order}")
-            
+        if not selected_criteria:
+            logger.warning(f"Invalid sort button ID: {self.current_sort_button_id}")
+            return
+
+        key_type = selected_criteria["key_type"]
+        sort_order = selected_criteria["order"]
+        
+        logger.info(f"Applying sort. Button ID: {button_id}, Criteria: '{selected_criteria['name']}', Key Type: {key_type}, Order: {sort_order}")
+        
+        # --- ソート処理中にUIをロック ---
+        self.ui_manager.set_sort_buttons_enabled(False) # ソートボタン群のみを無効化
+        QApplication.processEvents() # ボタンの無効化状態を即時反映
+
+        try:
             self.ui_manager.filter_proxy_model.set_sort_key_type(key_type) # ★★★ UIManager経由 ★★★
             # QSortFilterProxyModel.sort() を呼び出すと、lessThan が使用される
             # 列インデックスは0で固定 (lessThan内で実際のキータイプを見るため)
             self.ui_manager.filter_proxy_model.sort(0, sort_order) # ★★★ UIManager経由 ★★★
-            self._update_status_bar_info()
-        else:
-            logger.warning(f"Invalid sort button ID: {self.current_sort_button_id}")
+        finally:
+            # --- ソート処理完了後、UIロックを解除 ---
+            self.ui_manager.set_sort_buttons_enabled(True) # ソートボタン群を再度有効化
+        self._update_status_bar_info()
 
     def _create_menu_bar(self):
         """ メニューバーを作成し、アクションを直接配置 """
@@ -532,14 +557,28 @@ class MainWindow(QMainWindow):
 
     def on_thumbnail_loading_finished(self):
         logger.info("サムネイルの非同期読み込みが完了しました。")
-        self.statusBar.showMessage("サムネイル読み込み完了", 5000)
-        # ★★★ UI状態変更をUIManagerに委譲 ★★★
-        self.ui_manager.set_thumbnail_loading_ui_state(False)
-        self.is_loading_thumbnails = False
 
         if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由でアクセス ★★★
+            # フィルタを先に適用
             self.apply_filters(preserve_selection=True)
+
+            # フィルタ適用後、現在のソート設定でソートを実行
+            logger.info(f"サムネイル読み込み完了。現在のソート設定 (ボタンID: {self.current_sort_button_id}) をモデルに適用します。")
+            # is_loading_thumbnails フラグが False になった状態でソートを実行
+            # _apply_sort_from_toggle_button は is_loading_thumbnails をチェックするので、
+            # フラグを先に倒してから呼び出す。
+
+        # is_loading_thumbnails フラグとUIロックを解除
+        self.is_loading_thumbnails = False 
+        self.ui_manager.set_thumbnail_loading_ui_state(False) # ★★★ UI状態変更をUIManagerに委譲 ★★★
+
+        # ソートを実行 (is_loading_thumbnails が False になった後)
+        if self.ui_manager.filter_proxy_model:
+            self._apply_sort_from_toggle_button(self.current_sort_button_id)
+
         self._update_status_bar_info()
+        self.statusBar.showMessage("サムネイル読み込み完了", 5000)
+
         if self.thumbnail_loader_thread:
             self.thumbnail_loader_thread.deleteLater()
             self.thumbnail_loader_thread = None
@@ -622,24 +661,32 @@ class MainWindow(QMainWindow):
         self._update_status_bar_info()
 
     def apply_filters(self, preserve_selection=False):
-        # logger.debug(f"apply_filters called. Preserve selection: {preserve_selection}")
+        # logger.info(f"apply_filters: START - Preserve selection: {preserve_selection}") # 削除
         if not preserve_selection:
+            # logger.info("apply_filters: Calling deselect_all_thumbnails...") # 削除
             self.deselect_all_thumbnails()
+            # logger.info(f"apply_filters: deselect_all_thumbnails finished in ... seconds.") # 削除
+
         if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由 ★★★
             search_mode = "AND" if self.ui_manager.and_radio_button.isChecked() else "OR" # ★★★ UIManager経由 ★★★
+            # logger.info("apply_filters: Setting filter parameters...") # 削除
             self.ui_manager.filter_proxy_model.set_search_mode(search_mode) # ★★★ UIManager経由 ★★★
-            # logger.debug(f"Search mode set to: {search_mode}")
             self.ui_manager.filter_proxy_model.set_positive_prompt_filter(self.ui_manager.positive_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            # logger.debug(f"Positive prompt filter set to: '{self.positive_prompt_filter_edit.text()}'")
             self.ui_manager.filter_proxy_model.set_negative_prompt_filter(self.ui_manager.negative_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            # logger.debug(f"Negative prompt filter set to: '{self.negative_prompt_filter_edit.text()}'")
             self.ui_manager.filter_proxy_model.set_generation_info_filter(self.ui_manager.generation_info_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            # logger.debug(f"Generation info filter set to: '{self.generation_info_filter_edit.text()}'")
+            # logger.info(f"apply_filters: Filter parameters set in ... seconds.") # 削除
+
             # フィルタ条件設定後、明示的にinvalidateを呼び出して再フィルタリングと再ソートを促す
-            self.ui_manager.filter_proxy_model.invalidate() # ★★★ UIManager経由 ★★★
+            # logger.info("apply_filters: Calling filter_proxy_model.invalidateFilter()...") # 削除
+            self.ui_manager.filter_proxy_model.invalidateFilter() # ★★★ UIManager経由 ★★★ invalidate() から invalidateFilter() に変更
+            # logger.info(f"apply_filters: filter_proxy_model.invalidateFilter() finished in ... seconds.") # 削除
         else:
             logger.warning("Filter proxy model not yet initialized for apply_filters call.") # Warning level might be appropriate
+
+        # logger.info("apply_filters: Calling _update_status_bar_info...") # 削除
         self._update_status_bar_info()
+        # logger.info(f"apply_filters: _update_status_bar_info finished in ... seconds.") # 削除
+        # logger.info(f"apply_filters: END - Total time: ... seconds.") # 削除
 
     # --- ★★★ START: DropWindow連携メソッド ★★★ ---
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
@@ -695,19 +742,21 @@ class MainWindow(QMainWindow):
 
     # --- File Operation Completion Logic (called by FileOperationManager) ---
     def _process_file_op_completion(self, result):
-        # logger.info(f"_process_file_op_completion started. Result: {result}") # 詳細すぎるのでコメントアウト
+        # logger.info(f"_process_file_op_completion: START - Result: {result}") # 削除
         status = result.get('status', 'unknown')
         operation_type = result.get('operation_type', 'unknown')
         if status == 'cancelled':
             self.statusBar.showMessage("ファイル操作がキャンセルされました。", 5000)
+            # logger.info(f"_process_file_op_completion: END - Cancelled. Total time: ... seconds.") # 削除
             return
         errors = result.get('errors', [])
         successfully_moved_src_paths = result.get('successfully_moved_src_paths', []) # For move
         if operation_type == "move":
             moved_count = result.get('moved_count', 0)
             renamed_files = result.get('renamed_files', [])
+            # logger.info(f"_process_file_op_completion: Processing 'move' operation. Moved: {moved_count}, Renamed: {len(renamed_files)}, Errors: {len(errors)}") # 削除
             if moved_count > 0 and successfully_moved_src_paths:
-                 # logger.info(f"Successfully moved {moved_count} files. Updating model.") # コメントアウト
+                 # logger.info(f"_process_file_op_completion: Creating path_to_item_map...") # 削除
                  path_to_item_map = {}
                  for row in range(self.ui_manager.source_thumbnail_model.rowCount()): # ★★★ UIManager経由 ★★★
                      item = self.ui_manager.source_thumbnail_model.item(row) # ★★★ UIManager経由 ★★★
@@ -715,62 +764,82 @@ class MainWindow(QMainWindow):
                          item_path = item.data(Qt.ItemDataRole.UserRole)
                          if item_path:
                              path_to_item_map[item_path] = item
-                 logger.debug(f"path_to_item_map created with {len(path_to_item_map)} entries.")
+                 # logger.info(f"_process_file_op_completion: path_to_item_map created in ... seconds. Size: {len(path_to_item_map)}") # 削除
+                 # logger.info(f"_process_file_op_completion: Collecting and sorting items_to_remove_from_model...") # 削除
                  items_to_remove_from_model = []
                  for path_to_remove in successfully_moved_src_paths:
                      item_to_remove = path_to_item_map.get(path_to_remove)
                      if item_to_remove:
                          items_to_remove_from_model.append(item_to_remove)
                      else:
-                         logger.warning(f"Moved path {path_to_remove} not found in source model's path_to_item_map for removal.")
+                         logger.warning(f"_process_file_op_completion: Moved path {path_to_remove} not found in source model's path_to_item_map for removal.")
                  items_to_remove_from_model.sort(key=lambda x: x.row() if x and x.model() == self.ui_manager.source_thumbnail_model else -1, reverse=True) # ★★★ UIManager経由 ★★★
-                 logger.debug(f"Found {len(items_to_remove_from_model)} items to remove from model.")
-
+                 # logger.info(f"_process_file_op_completion: items_to_remove_from_model collected and sorted in ... seconds. Count: {len(items_to_remove_from_model)}") # 削除
                  # --- 選択変更シグナルを一時的にブロック ---
+                 # logger.info(f"_process_file_op_completion: Disconnecting selectionChanged signal...") # 削除
                  try:
                      self.ui_manager.thumbnail_view.selectionModel().selectionChanged.disconnect(self.handle_thumbnail_selection_changed) # ★★★ UIManager経由 ★★★
-                     # logger.debug("selectionChanged signal disconnected.")
+                     # logger.info(f"_process_file_op_completion: selectionChanged signal disconnected in ... seconds.") # 削除
                  except TypeError:
                      logger.warning("selectionChanged signal was not connected, cannot disconnect.")
                  # --- シグナルブロック終わり ---
-
                  # 削除対象の行番号リストを作成 (降順になっているはず)
                  rows_to_delete_indices = []
                  for item_to_remove_instance in items_to_remove_from_model:
                      if item_to_remove_instance and item_to_remove_instance.model() == self.ui_manager.source_thumbnail_model: # ★★★ UIManager経由 ★★★
                          rows_to_delete_indices.append(item_to_remove_instance.row())
                      elif item_to_remove_instance:
-                         logger.warning(f"Item for path {item_to_remove_instance.data(Qt.ItemDataRole.UserRole)} is no longer in the expected model or is invalid, skipping removal.")
-                 
+                         logger.warning(f"_process_file_op_completion: Item for path {item_to_remove_instance.data(Qt.ItemDataRole.UserRole)} is no longer in the expected model or is invalid, skipping removal.")
+                 # logger.info(f"_process_file_op_completion: Disabling thumbnail_view updates...") # 削除
                  self.ui_manager.thumbnail_view.setUpdatesEnabled(False) # ★ ビューの更新を一時的に無効化 ★★★ UIManager経由 ★★★
-
+                 # logger.info(f"_process_file_op_completion: thumbnail_view updates disabled in ... seconds.") # 削除
                  if rows_to_delete_indices:
-                     # logger.debug(f"Source model rowCount before removal: {self.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.filter_proxy_model.rowCount()}")
+                     # logger.info(f"_process_file_op_completion: Starting item removal loop for {len(rows_to_delete_indices)} rows. Source model rowCount before: {self.ui_manager.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.ui_manager.filter_proxy_model.rowCount()}") # 削除
+                     num_removed_successfully = 0
+
+                     # --- モデルの大幅な変更を通知 ---
+                     # logger.info("_process_file_op_completion: Emitting layoutAboutToBeChanged.") # 削除
+                     self.ui_manager.source_thumbnail_model.layoutAboutToBeChanged.emit()
+                     # ---------------------------------
+
                      for row_num in rows_to_delete_indices:
+                         # logger.debug(f"_process_file_op_completion: Removing row {row_num}...")
+                         # start_time_remove_row = time.time()
                          # QModelIndex() は親がないトップレベルアイテムを示す
-                         self.ui_manager.source_thumbnail_model.beginRemoveRows(QModelIndex(), row_num, row_num) # ★★★ UIManager経由 ★★★
+                         # self.ui_manager.source_thumbnail_model.beginRemoveRows(QModelIndex(), row_num, row_num) # ★ 変更: layoutAboutToBeChanged/layoutChanged を使うためコメントアウト
                          removed = self.ui_manager.source_thumbnail_model.removeRow(row_num) # ★★★ UIManager経由 ★★★
-                         self.ui_manager.source_thumbnail_model.endRemoveRows() # ★★★ UIManager経由 ★★★
+                         # self.ui_manager.source_thumbnail_model.endRemoveRows() # ★ 変更: layoutAboutToBeChanged/layoutChanged を使うためコメントアウト
                          if removed:
-                             pass # logger.debug(f"Successfully removed row {row_num} from source model.")
+                             num_removed_successfully +=1
+                             # logger.debug(f"_process_file_op_completion: Successfully removed row {row_num} from source model in {time.time() - start_time_remove_row:.4f} seconds.")
                          else:
-                             logger.warning(f"Failed to remove row {row_num} from source model.")                         
-                     # logger.debug(f"Source model rowCount after removal: {self.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.filter_proxy_model.rowCount()}")
-              
+                             logger.warning(f"_process_file_op_completion: Failed to remove row {row_num} from source model.")
+                     # --- モデルの変更完了を通知 ---
+                     # logger.info("_process_file_op_completion: Emitting layoutChanged.") # 削除
+                     self.ui_manager.source_thumbnail_model.layoutChanged.emit()
+                     # -----------------------------
+                     # logger.info(f"_process_file_op_completion: Item removal loop finished in ... seconds. Successfully removed: {num_removed_successfully} items.") # 削除
+                     # logger.info(f"_process_file_op_completion: Source model rowCount after removal: {self.ui_manager.source_thumbnail_model.rowCount()}, Proxy model rowCount: {self.ui_manager.filter_proxy_model.rowCount()}") # 削除
                  # --- 選択変更シグナルを再接続し、手動でハンドラを呼び出す ---
+                 # logger.info(f"_process_file_op_completion: Reconnecting selectionChanged signal...") # 削除
                  self.ui_manager.thumbnail_view.selectionModel().selectionChanged.connect(self.handle_thumbnail_selection_changed) # ★★★ UIManager経由 ★★★
-                 # logger.debug("selectionChanged signal reconnected.")
+                 # logger.info(f"_process_file_op_completion: selectionChanged signal reconnected in ... seconds.") # 削除
+                 # logger.info(f"_process_file_op_completion: Calling handle_thumbnail_selection_changed manually...") # 削除
                  # モデル変更後に選択状態が自動的に更新されるが、ハンドラは呼ばれない可能性があるため手動で呼ぶ
                  self.handle_thumbnail_selection_changed(QItemSelection(), QItemSelection()) # 空の選択変更としてハンドラをトリガー
                  self.selected_file_paths.clear()
-                 
+                 # logger.info(f"_process_file_op_completion: handle_thumbnail_selection_changed finished in ... seconds.") # 削除
                  # ★★★ ファイル移動後、フィルタを再適用してビューを更新 ★★★
+                 # logger.info(f"_process_file_op_completion: Processing UI events before enabling updates...") # 削除
                  QApplication.processEvents() # UIイベント処理を挟む
+                 # logger.info(f"_process_file_op_completion: Enabling thumbnail_view updates...") # 削除
                  self.ui_manager.thumbnail_view.setUpdatesEnabled(True) # ★ ビューの更新を有効化 ★★★ UIManager経由 ★★★
+                 # logger.info(f"_process_file_op_completion: thumbnail_view updates enabled in ... seconds.") # 削除
+                 # logger.info(f"_process_file_op_completion: Calling apply_filters...") # 削除
                  # apply_filters の前に True に戻すか、後にするかは挙動を見て調整
                  self.apply_filters(preserve_selection=True) # preserve_selection=True で現在の選択を維持しようと試みる (実際にはクリアされるが)
-                 # _update_status_bar_info() は handle_thumbnail_selection_changed 内で呼ばれる
-                 self._update_status_bar_info()
+                 # logger.info(f"_process_file_op_completion: apply_filters finished in ... seconds.") # 削除
+                 self._update_status_bar_info() # _update_status_bar_info() は handle_thumbnail_selection_changed 内でも呼ばれるが、ここでも呼ぶ
             if renamed_files:
                 dialog = RenamedFilesDialog(renamed_files, self)
                 dialog.exec()
@@ -783,6 +852,7 @@ class MainWindow(QMainWindow):
             elif errors and moved_count == 0:
                  self.statusBar.showMessage("ファイルの移動に失敗しました。", 3000)
         elif operation_type == "copy":
+            # logger.info(f"_process_file_op_completion: Processing 'copy' operation. Result: {result}") # 削除
             copied_count = result.get('copied_count', 0)
             if errors:
                 QMessageBox.warning(self, "コピーエラー", "以下のエラーが発生しました:\n" + "\n".join(errors))
@@ -791,6 +861,7 @@ class MainWindow(QMainWindow):
             elif not errors:
                 self.statusBar.showMessage("コピーするファイルがありませんでした、または処理が完了しました。", 3000)
         if status == 'completed' and not errors:
+            # logger.info(f"_process_file_op_completion: Operation '{operation_type}' completed without errors. Deselecting thumbnails.") # 削除
             self.deselect_all_thumbnails()
             if operation_type == "copy":
                 for item_in_order in self.copy_selection_order:
@@ -802,8 +873,7 @@ class MainWindow(QMainWindow):
                             self.ui_manager.thumbnail_view.update(proxy_idx) # ★★★ UIManager経由 ★★★
                 self.copy_selection_order.clear()
             # ★★★ ファイル移動完了後の自動的な空フォルダ削除処理を削除 ★★★
-
-        # logger.info("_process_file_op_completion finished.") # 詳細すぎるのでコメントアウト
+        # logger.info(f"_process_file_op_completion: END - Total time: ... seconds.") # 削除
 
     def _try_delete_empty_subfolders(self, target_folder_path):
         if not target_folder_path or not os.path.isdir(target_folder_path):
