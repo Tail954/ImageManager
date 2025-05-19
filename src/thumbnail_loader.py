@@ -2,14 +2,15 @@
 import logging
 import os # For os.path.getmtime and os.cpu_count()
 import concurrent.futures # For ThreadPoolExecutor
-import threading # For Lock
-from PyQt6.QtCore import QThread, pyqtSignal
+import threading
+from PyQt6.QtCore import QThread, pyqtSignal, QRectF, Qt, QPointF # QPointF を追加
 from PIL import Image
 try:
     from PIL import ImageQt
 except ImportError:
     ImageQt = None
 
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont, QImage, QPolygonF # QPolygonF を追加
 # Import shared metadata extraction logic
 from .metadata_utils import extract_image_metadata
 
@@ -61,24 +62,76 @@ class ThumbnailLoaderThread(QThread):
         metadata_dict['filename_for_sort'] = filename_for_sort
         metadata_dict['update_timestamp'] = update_timestamp
         # logger.debug(f"_process_single_image: Metadata after adding sort keys for {file_path}: {metadata_dict}")
-
+        
         try:
             img = Image.open(file_path)
-            img.thumbnail((self.target_size, self.target_size))
-            # 'filename_for_sort' と 'update_timestamp' は既に上で設定済み
-
-            # Revert to original ImageQt conversion logic based on mode for safety/optimality
-            if img.mode == "RGBA":
-                q_image = ImageQt.ImageQt(img)
-            elif img.mode == "RGB":
-                q_image = ImageQt.ImageQt(img.convert("RGBA")) # Convert RGB to RGBA
-            else: # Other modes like P, L, 1, etc.
-                q_image = ImageQt.ImageQt(img.convert("RGBA")) # Convert to RGBA as a general fallback
+            is_animated_webp = False
+            if img.format == "WEBP":
+                try:
+                    if img.is_animated: # Pillow 9.1.0以降
+                        is_animated_webp = True
+                except AttributeError: # 古いPillowではis_animatedがない場合がある
+                    if hasattr(img, 'n_frames') and img.n_frames > 1:
+                        is_animated_webp = True
             
-            # metadata_dict = extract_image_metadata(file_path) # ★★★ これは既に上で実行済み ★★★
-            # logger.debug(f"_process_single_image: Successfully processed image and metadata for {file_path}. Final metadata: {metadata_dict}")
-            return item, q_image, metadata_dict
+            if is_animated_webp:
+                logger.debug(f"アニメーションWebPを検出: {file_path}。アイコンを生成します。")
+                img.seek(0) # 最初のフレームを選択
 
+                # 最初のフレームをサムネイルサイズにリサイズ
+                img.thumbnail((self.target_size, self.target_size))
+
+                # Pillow Image を QImage に変換
+                if img.mode == "RGBA":
+                    base_q_image = ImageQt.ImageQt(img)
+                elif img.mode == "RGB":
+                    base_q_image = ImageQt.ImageQt(img.convert("RGBA"))
+                else: # Other modes like P, L, 1, etc.
+                    base_q_image = ImageQt.ImageQt(img.convert("RGBA"))
+
+                # QImage から QPixmap を作成して、その上にアイコンを描画
+                pixmap = QPixmap.fromImage(base_q_image)
+                
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+                # アイコンの描画 (例: 右下に小さな再生ボタン)
+                icon_base_size = max(16, self.target_size // 6) # アイコンの基準サイズ
+                padding = self.target_size // 20 # パディングをサムネイルサイズに比例させる
+                
+                icon_rect_x = pixmap.width() - icon_base_size - padding
+                icon_rect_y = pixmap.height() - icon_base_size - padding
+                icon_rect = QRectF(icon_rect_x, icon_rect_y, icon_base_size, icon_base_size)
+
+                # Vマークアイコンの描画
+                # 背景 (半透明の円)
+                painter.setBrush(QColor(0, 0, 0, 120)) # 少し濃いめの半透明黒
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(icon_rect)
+
+                # 「V」の文字を描画
+                painter.setFont(QFont("Arial", int(icon_base_size * 0.7), QFont.Weight.Bold)) # アイコンサイズに合わせたフォントサイズ
+                painter.setPen(QColor("white"))
+                # テキストをicon_rectの中央に描画
+                # QFontMetrics を使って正確な中央揃えも可能ですが、ここでは単純なAlignCenterを使用
+                painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "V")
+
+                painter.end()
+                q_image = pixmap.toImage() # QImageに変換
+            else:
+                # 静止画の場合は通常のサムネイル生成
+                img.thumbnail((self.target_size, self.target_size))
+                if img.mode == "RGBA":
+                    q_image = ImageQt.ImageQt(img)
+                elif img.mode == "RGB":
+                    q_image = ImageQt.ImageQt(img.convert("RGBA")) # Convert RGB to RGBA
+                else: # Other modes like P, L, 1, etc.
+                    q_image = ImageQt.ImageQt(img.convert("RGBA")) # Convert to RGBA as a general fallback
+
+            return item, q_image, metadata_dict
+        except Image.DecompressionBombError:
+            logger.error(f"サムネイル生成エラー (DecompressionBombError): {file_path}")
+            return item, None, metadata_dict
         except FileNotFoundError:
             logger.error(f"サムネイル生成/メタデータ抽出エラー (ファイルが見つかりません): {file_path}")
             # metadata_dict には既にソート用キーと抽出試行済みのメタデータが入っている

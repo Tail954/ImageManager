@@ -2,7 +2,11 @@ import pytest
 from PyQt6.QtWidgets import QApplication, QLabel
 from PyQt6.QtGui import QPixmap, QImage, QMouseEvent, QWheelEvent
 from PyQt6.QtCore import Qt, QPoint, QSize, QPointF # Added QPointF
+import sys
 import os
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.full_image_dialog import FullImageDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM
 from src.constants import METADATA_ROLE # If FullImageDialog interacts with items having this
@@ -135,10 +139,14 @@ class TestFullImageDialog:
         """Test _load_and_display_image when QPixmap.load() fails."""
         image_paths = [TEST_IMAGE_VALID_1] # Use a normally valid image path
         
-        # Mock QPixmap.load to simulate failure
-        mock_pixmap_load = mocker.patch('PyQt6.QtGui.QPixmap.load', return_value=False)
+        # --- ImageQt を None にして、QPixmap.load() が呼び出されるようにする ---
+        # mocker.patch はコンテキストマネージャではないので、直接 with 文では使えない
+        # テスト関数スコープで ImageQt を None に置き換える
+        mocker.patch('src.full_image_dialog.ImageQt', None)
         
+        mock_pixmap_load = mocker.patch('src.full_image_dialog.QPixmap.load', return_value=False)
         dialog = FullImageDialog(image_paths, 0, preview_mode=PREVIEW_MODE_FIT, parent=None)
+
         QApplication.processEvents()
         
         mock_pixmap_load.assert_called_once_with(TEST_IMAGE_VALID_1)
