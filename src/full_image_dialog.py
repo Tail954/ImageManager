@@ -87,6 +87,7 @@ class FullImageDialog(QDialog):
         self.fullscreen_button = QPushButton("□")
         self.fullscreen_button.setFixedSize(30, 30)
         self.fullscreen_button.setToolTip("最大化/元に戻す")
+        self.fullscreen_button.setFocusPolicy(Qt.FocusPolicy.NoFocus) # ★ フォーカスポリシー変更
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen_state)
         self.controls_layout.addWidget(self.fullscreen_button)
         
@@ -111,6 +112,7 @@ class FullImageDialog(QDialog):
         
         self._load_and_display_image() # This will also call _update_navigation_buttons
         self.resize(800, 600)
+        self.setFocus() # ★ 初期表示時にフォーカスを設定
 
     def update_image(self, new_image_path_list, new_current_index):
         """Updates the image list and current index, then loads the image."""
@@ -141,6 +143,7 @@ class FullImageDialog(QDialog):
             self.show()
         self.raise_()
         self.activateWindow()
+        self.setFocus() # ★ 画像更新時にフォーカスを設定
 
     def _load_current_image(self):
         """Loads the image at the current_index from all_image_paths."""
@@ -175,6 +178,7 @@ class FullImageDialog(QDialog):
             self.pixmap = QPixmap()
             self._update_image_display()
         self._update_navigation_buttons()
+        self.setFocus() # ★ 画像読み込み後にフォーカスを設定
 
 
     def show_previous_image(self):
@@ -182,12 +186,14 @@ class FullImageDialog(QDialog):
             return
         self.current_index -= 1
         self._load_current_image()
+        # self.setFocus() は _load_current_image 内で呼ばれる
 
     def show_next_image(self):
         if not self.all_image_paths or self.current_index >= len(self.all_image_paths) - 1: # Also check if already at last
             return
         self.current_index += 1
         self._load_current_image()
+        # self.setFocus() は _load_current_image 内で呼ばれる
 
     def _update_navigation_buttons(self):
         if not self.all_image_paths or self.current_index == -1:
@@ -256,7 +262,7 @@ class FullImageDialog(QDialog):
         
         self._update_image_display()
         self._update_navigation_buttons() 
-
+        # self.setFocus() は呼び出し元の _load_current_image で呼ばれる
     def _update_image_display(self):
         if self.pixmap.isNull():
             # Pixmap is null. This means image loading failed, or there's no image to display.
@@ -380,10 +386,13 @@ class FullImageDialog(QDialog):
         key = event.key()
         if key == Qt.Key.Key_Escape:
             self.close()
+            event.accept() # ★ イベントを消費
         elif key == Qt.Key.Key_Left:
             self.show_previous_image()
+            event.accept() # ★ イベントを消費
         elif key == Qt.Key.Key_Right or key == Qt.Key.Key_Space: # Space for next image
             self.show_next_image()
+            event.accept() # ★ イベントを消費
         else:
             super().keyPressEvent(event)
 
