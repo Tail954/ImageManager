@@ -7,30 +7,28 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QUrl  # QUrl を明示的にインポート
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDragMoveEvent, QScreen # QScreenもインポート
 
-logger = logging.getLogger(__name__)
+from .constants import IMAGE_EXTENSIONS # Import from constants
 
-# 対応する画像ファイルの拡張子リスト
-IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp', '.heic', '.heif']
+logger = logging.getLogger(__name__)
 
 class DropWindow(QWidget):
     """
     画像ファイルのドラッグ＆ドロップを受け付け、
     メインウィンドウ経由でメタデータを表示するウィンドウ。
     """
-    def __init__(self, main_window):
+    def __init__(self, dialog_manager): # ★引数を dialog_manager に変更
         """
         コンストラクタ
 
         Args:
-            main_window (MainWindow): メインウィンドウのインスタンス参照
-                                      show_metadata_for_dropped_file メソッドを持つことを期待。
+            dialog_manager (DialogManager): DialogManager のインスタンス参照
+                                            show_metadata_for_dropped_file メソッドを持つことを期待。
         """
         super().__init__()
-        if not hasattr(main_window, 'show_metadata_for_dropped_file'):
-            # 起動時に開発者が気づけるようにするための基本的なチェック
-            logger.error("main_window に show_metadata_for_dropped_file メソッドが存在しません。")
-            # raise AttributeError("main_window に show_metadata_for_dropped_file メソッドが存在しません。") # 厳格にするなら例外送出
-        self.main_window = main_window
+        if not hasattr(dialog_manager, 'show_metadata_for_dropped_file'):
+            logger.error("dialog_manager に show_metadata_for_dropped_file メソッドが存在しません。")
+            # raise AttributeError("dialog_manager に show_metadata_for_dropped_file メソッドが存在しません。")
+        self.dialog_manager = dialog_manager # ★dialog_manager を保持
         self.initUI()
         self.setAcceptDrops(True)
 
@@ -149,8 +147,8 @@ class DropWindow(QWidget):
                         self.label.setText(success_text) # 処理中であることをユーザーにフィードバック
                         QApplication.processEvents() # ラベルの更新を即時反映
 
-                        # MainWindowのメソッドを呼び出してメタデータ表示を依頼
-                        self.main_window.show_metadata_for_dropped_file(file_path)
+                        # DialogManagerのメソッドを呼び出してメタデータ表示を依頼
+                        self.dialog_manager.show_metadata_for_dropped_file(file_path) # ★呼び出し先を変更
                         # MainWindow側の処理結果によってラベルを変えるのが理想だが、
                         # DropWindow側では成功したと仮定してメッセージを出すか、
                         # MainWindowからコールバック等で結果を受け取る必要がある。

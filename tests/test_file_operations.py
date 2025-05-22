@@ -2,6 +2,11 @@ import unittest
 import os
 import shutil
 import tempfile
+
+# Ensure src directory is in Python path for imports
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from unittest.mock import patch, MagicMock, call
 
 # Assuming src is a sibling directory to tests, or PYTHONPATH is set up
@@ -275,11 +280,18 @@ class TestFileOperations(unittest.TestCase):
 
     def setUp(self):
         self.mock_main_window = MagicMock()
+        # ★★★ UIManager のモックを追加 ★★★
+        self.mock_ui_manager = MagicMock()
+        self.mock_main_window.ui_manager = self.mock_ui_manager
+        # FileOperationManager がアクセスする可能性のある MainWindow のUI要素のモック
+        self.mock_ui_manager.move_files_button = MagicMock()
+        self.mock_ui_manager.copy_files_button = MagicMock()
+        self.mock_ui_manager.copy_mode_button = MagicMock()
+
         # Add methods that FileOperations expects to connect to
         self.mock_main_window._handle_file_op_progress = MagicMock()
         self.mock_main_window._handle_file_op_finished = MagicMock()
         self.mock_main_window._handle_file_op_error = MagicMock()
-
         self.file_ops = FileOperations(parent=None) # Initialize with None parent
 
     @patch('src.file_operations.FileOperationsWorker')
@@ -295,7 +307,10 @@ class TestFileOperations(unittest.TestCase):
         source_paths = ["/path/to/source"]
         dest_folder = "/path/to/dest"
 
-        with patch.object(self.file_ops, 'parent', return_value=self.mock_main_window):
+        # FileOperations は file_op_manager を介して MainWindow のメソッドを呼び出す
+        # file_op_manager のモックを作成し、FileOperations に渡す
+        mock_file_op_manager = MagicMock()
+        with patch.object(self.file_ops, 'file_op_manager', mock_file_op_manager):
             result = self.file_ops.start_operation(op_type, source_paths, dest_folder)
 
         self.assertTrue(result)
@@ -303,9 +318,9 @@ class TestFileOperations(unittest.TestCase):
         mock_worker_instance.moveToThread.assert_called_once_with(mock_thread_instance)
 
         # Check signal connections
-        mock_worker_instance.signals.progress.connect.assert_called_once_with(self.mock_main_window._handle_file_op_progress)
-        mock_worker_instance.signals.finished.connect.assert_any_call(self.mock_main_window._handle_file_op_finished) # Also connects to _on_worker_finished
-        mock_worker_instance.signals.error.connect.assert_called_once_with(self.mock_main_window._handle_file_op_error)
+        mock_worker_instance.signals.progress.connect.assert_called_once_with(mock_file_op_manager._handle_file_op_progress)
+        mock_worker_instance.signals.finished.connect.assert_any_call(mock_file_op_manager._handle_file_op_finished)
+        mock_worker_instance.signals.error.connect.assert_called_once_with(mock_file_op_manager._handle_file_op_error)
 
         mock_thread_instance.started.connect.assert_called_once_with(mock_worker_instance.run)
         mock_worker_instance.signals.finished.connect.assert_any_call(self.file_ops._on_worker_finished)
