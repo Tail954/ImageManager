@@ -29,6 +29,7 @@ class UIManager:
         self.sort_filename_desc_button = None
         self.sort_date_asc_button = None
         self.sort_date_desc_button = None
+        self.sort_load_order_button = None # ★★★ 追加: 読み込み順ソートボタン ★★★
         self.and_radio_button = None
         self.or_radio_button = None
         self.search_mode_button_group = None
@@ -150,6 +151,7 @@ class UIManager:
             1: ("ファイル名 降順", "sort_filename_desc_button"),
             2: ("更新日時 昇順", "sort_date_asc_button"),
             3: ("更新日時 降順", "sort_date_desc_button"),
+            4: ("読み込み順", "sort_load_order_button"), # ★★★ 追加 ★★★
         }
         
         row1_layout = QHBoxLayout()
@@ -176,6 +178,13 @@ class UIManager:
         row2_layout.addWidget(getattr(self, buttons_map[3][1]))
         sort_options_layout.addLayout(row2_layout)
 
+        # ★★★ 追加: 読み込み順ボタンを新しい行に追加 ★★★
+        row3_layout = QHBoxLayout()
+        setattr(self, buttons_map[4][1], QPushButton(self.mw.sort_criteria_map[4]["caption"]))
+        getattr(self, buttons_map[4][1]).setCheckable(True)
+        self.sort_button_group.addButton(getattr(self, buttons_map[4][1]), 4)
+        row3_layout.addWidget(getattr(self, buttons_map[4][1]))
+        sort_options_layout.addLayout(row3_layout)
         self.sort_button_group.idClicked.connect(self.mw._apply_sort_from_toggle_button)
         return sort_options_group_box
 

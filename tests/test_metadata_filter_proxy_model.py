@@ -1,347 +1,211 @@
-import pytest
-from PyQt6.QtCore import QSortFilterProxyModel, Qt
-from PyQt6.QtGui import QStandardItemModel, QStandardItem
+import unittest # unittest を使用するように変更
+import os # os をインポート
+import time # time をインポート
+from PyQt6.QtWidgets import QApplication # QApplication をインポート
+from PyQt6.QtCore import Qt, QModelIndex, QVariant # QModelIndex, QVariant をインポート
+from PyQt6.QtGui import QStandardItemModel, QStandardItem # QStandardItemModel, QStandardItem をインポート
 
-# Assuming MetadataFilterProxyModel and METADATA_ROLE are accessible
-# Adjust the import path as necessary based on your project structure
-# For example, if 'src' is in sys.path or tests are run from project root:
+# Ensure src directory is in Python path for imports
+import sys # sys をインポート
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from src.metadata_filter_proxy_model import MetadataFilterProxyModel
-from src.main_window import METADATA_ROLE # Or wherever METADATA_ROLE is defined
+from src.metadata_filter_proxy_model import METADATA_ROLE # METADATA_ROLE を metadata_filter_proxy_model からインポート
 
-@pytest.fixture
-def source_model_with_data():
-    model = QStandardItemModel()
-    # Item 1: Matches "apple" in positive_prompt
-    item1 = QStandardItem("Item 1")
-    item1.setData({"positive_prompt": "an apple on a table", "negative_prompt": "banana", "generation_info": "test info 1"}, METADATA_ROLE)
-    model.appendRow(item1)
+app = None
+def setUpModule():
+    global app
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
 
-    # Item 2: Matches "banana" in negative_prompt
-    item2 = QStandardItem("Item 2")
-    item2.setData({"positive_prompt": "orange", "negative_prompt": "a ripe banana", "generation_info": "test info 2"}, METADATA_ROLE)
-    model.appendRow(item2)
+def tearDownModule():
+    global app
+    if app is not None:
+        # app.quit() # QApplication.quit() はテスト全体を終了させてしまう可能性がある
+        app = None
 
-    # Item 3: Matches "apple" and "orange"
-    item3 = QStandardItem("Item 3")
-    item3.setData({"positive_prompt": "apple, orange", "negative_prompt": "grape", "generation_info": "test info 3"}, METADATA_ROLE)
-    model.appendRow(item3)
-    
-    # Item 4: No matching keywords for simple tests
-    item4 = QStandardItem("Item 4")
-    item4.setData({"positive_prompt": "kiwi", "negative_prompt": "grape", "generation_info": "test info 4"}, METADATA_ROLE)
-    model.appendRow(item4)
+class TestMetadataFilterProxyModel(unittest.TestCase):
+    def setUp(self):
+        self.source_model = QStandardItemModel()
+        self.proxy_model = MetadataFilterProxyModel()
+        self.proxy_model.setSourceModel(self.source_model)
 
-    # Item 5: Missing negative_prompt and generation_info
-    item5 = QStandardItem("Item 5")
-    item5.setData({"positive_prompt": "sky"}, METADATA_ROLE)
-    model.appendRow(item5)
+        # テストデータ用のダミーファイルパスとメタデータ
+        self.test_data_dir = os.path.join(os.path.dirname(__file__), "test_data", "proxy_model_sort")
+        os.makedirs(self.test_data_dir, exist_ok=True)
 
-    # Item 6: Empty positive_prompt
-    item6 = QStandardItem("Item 6")
-    item6.setData({"positive_prompt": "", "negative_prompt": "tree", "generation_info": "test info 6"}, METADATA_ROLE)
-    model.appendRow(item6)
-    return model
+        self.files_info = [
+            {"name": "c_old.png", "timestamp_offset": 0, "positive": "apple banana", "negative": "orange", "generation": "steps 10"}, # oldest
+            {"name": "a_new.jpg", "timestamp_offset": 10, "positive": "apple", "negative": "sky", "generation": "steps 20"},        # newest
+            {"name": "b_mid.webp", "timestamp_offset": 5, "positive": "banana", "negative": "orange tree", "generation": "steps 15"} # middle
+        ]
 
-@pytest.fixture
-def filter_proxy_model(source_model_with_data):
-    proxy_model = MetadataFilterProxyModel()
-    proxy_model.setSourceModel(source_model_with_data)
-    return proxy_model
+        # ダミーファイルを作成し、メタデータをアイテムに設定
+        for i, info in enumerate(self.files_info):
+            file_path = os.path.join(self.test_data_dir, info["name"])
+            # ファイルを作成し、更新日時を設定 (ファイルが存在しない場合のみ)
+            if not os.path.exists(file_path):
+                with open(file_path, "w") as f:
+                    f.write(f"dummy content for {info['name']}")
 
-def test_filter_positive_prompt_exact_match(filter_proxy_model, source_model_with_data):
-    """Test filtering by a single exact keyword in positive_prompt."""
-    filter_proxy_model.set_positive_prompt_filter("apple")
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND") # Explicitly set for clarity
-    
-    # Expected: Item 1 and Item 3 should match "apple"
-    # The filterAcceptsRow method in the proxy model will determine visibility.
-    # We check the rowCount of the proxy model.
-    
-    # To verify which items are visible, we can iterate through source model rows
-    # and check if proxy_model.filterAcceptsRow(row, QModelIndex()) is true.
-    # Or, more simply, check the rowCount of the proxy model.
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    assert filter_proxy_model.rowCount() == 2
-    assert "Item 1" in visible_item_texts
-    assert "Item 3" in visible_item_texts
+            # 更新日時を調整 (エポックタイムからの相対時間)
+            # 実際のファイルシステム操作はテストの安定性に影響するため、メタデータに直接設定
+            current_time = time.time()
+            mock_timestamp = current_time + info["timestamp_offset"]
 
-def test_filter_no_match(filter_proxy_model):
-    """Test filtering with a keyword that matches no items."""
-    filter_proxy_model.set_positive_prompt_filter("nonexistent_keyword")
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND")
-    
-    assert filter_proxy_model.rowCount() == 0
+            # QStandardItemを作成し、データを設定
+            item = QStandardItem(info["name"]) # 表示テキストはファイル名
+            item.setData(file_path, Qt.ItemDataRole.UserRole) # ファイルパスをUserRoleに
+            item.setData({
+                'positive_prompt': info.get("positive", ""),
+                'negative_prompt': info.get("negative", ""),
+                'generation_info': info.get("generation", ""),
+                'filename_for_sort': info["name"].lower(),
+                'update_timestamp': mock_timestamp
+            }, METADATA_ROLE)
+            self.source_model.appendRow(item)
 
-def test_filter_cleared(filter_proxy_model, source_model_with_data):
-    """Test if clearing filters shows all items."""
-    # Apply some filter first
-    filter_proxy_model.set_positive_prompt_filter("apple")
-    assert filter_proxy_model.rowCount() < source_model_with_data.rowCount()
-    
-    # Clear filters
-    filter_proxy_model.set_positive_prompt_filter("")
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    
-    assert filter_proxy_model.rowCount() == source_model_with_data.rowCount()
+    def tearDown(self):
+        # テスト後にダミーファイルを削除
+        for info in self.files_info:
+            file_path = os.path.join(self.test_data_dir, info["name"])
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        if os.path.exists(self.test_data_dir) and not os.listdir(self.test_data_dir):
+            os.rmdir(self.test_data_dir)
 
-def test_filter_negative_prompt_exact_match(filter_proxy_model, source_model_with_data):
-    """Test filtering by a single exact keyword in negative_prompt."""
-    filter_proxy_model.set_positive_prompt_filter("")
-    filter_proxy_model.set_negative_prompt_filter("banana")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND")
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    # Item 1 ("banana") and Item 2 ("a ripe banana") should match
-    assert filter_proxy_model.rowCount() == 2 
-    assert "Item 1" in visible_item_texts
-    assert "Item 2" in visible_item_texts
+    def get_proxy_item_texts(self):
+        texts = []
+        for i in range(self.proxy_model.rowCount()):
+            proxy_index = self.proxy_model.index(i, 0)
+            source_index = self.proxy_model.mapToSource(proxy_index)
+            item = self.source_model.itemFromIndex(source_index)
+            texts.append(item.text())
+        return texts
 
-def test_filter_generation_info_exact_match(filter_proxy_model, source_model_with_data):
-    """Test filtering by a single exact keyword in generation_info."""
-    filter_proxy_model.set_positive_prompt_filter("")
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("test info 1")
-    filter_proxy_model.set_search_mode("AND")
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    assert filter_proxy_model.rowCount() == 1
-    assert "Item 1" in visible_item_texts
+    def test_initial_state_no_filter_no_sort(self):
+        # 初期状態ではフィルタもソートもかかっていないはず
+        # (ただし、QSortFilterProxyModelのデフォルトのソート挙動に注意)
+        # ここでは、ソースモデルの順序が維持されることを期待 (明示的なソート前)
+        expected_order = [info["name"] for info in self.files_info]
+        self.assertEqual(self.get_proxy_item_texts(), expected_order)
 
-def test_filter_and_search_multiple_fields(filter_proxy_model, source_model_with_data):
-    """Test AND search across positive_prompt and negative_prompt."""
-    # Item 1: positive_prompt: "an apple on a table", negative_prompt: "banana"
-    filter_proxy_model.set_positive_prompt_filter("apple")
-    filter_proxy_model.set_negative_prompt_filter("banana")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND")
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    assert filter_proxy_model.rowCount() == 1
-    assert "Item 1" in visible_item_texts
+    def test_sort_by_filename_asc(self):
+        self.proxy_model.set_sort_key_type(0) # 0: Filename
+        self.proxy_model.sort(0, Qt.SortOrder.AscendingOrder)
+        expected_order = sorted([info["name"] for info in self.files_info])
+        self.assertEqual(self.get_proxy_item_texts(), expected_order)
 
-def test_filter_or_search_multiple_fields(filter_proxy_model, source_model_with_data):
-    """Test OR search across positive_prompt and negative_prompt."""
-    # Item 1: positive_prompt: "an apple on a table", negative_prompt: "banana"
-    # Item 2: positive_prompt: "orange", negative_prompt: "a ripe banana"
-    # Item 3: positive_prompt: "apple, orange"
-    filter_proxy_model.set_positive_prompt_filter("table") # Matches Item 1
-    filter_proxy_model.set_negative_prompt_filter("ripe")  # Matches Item 2
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("OR")
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    assert filter_proxy_model.rowCount() == 2
-    assert "Item 1" in visible_item_texts # Matches "table" in positive_prompt
-    assert "Item 2" in visible_item_texts # Matches "ripe" in negative_prompt
+    def test_sort_by_filename_desc(self):
+        self.proxy_model.set_sort_key_type(0) # 0: Filename
+        self.proxy_model.sort(0, Qt.SortOrder.DescendingOrder)
+        expected_order = sorted([info["name"] for info in self.files_info], reverse=True)
+        self.assertEqual(self.get_proxy_item_texts(), expected_order)
 
-def test_filter_positive_prompt_comma_separated_and_mode(filter_proxy_model, source_model_with_data):
-    """Test filtering by comma-separated keywords in positive_prompt (AND logic within field)."""
-    # Item 3: positive_prompt: "apple, orange"
-    filter_proxy_model.set_positive_prompt_filter("apple, orange")
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND") # This AND is for *between* fields.
-                                          # _keywords_match also uses "AND" for keywords within a field by default.
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    assert filter_proxy_model.rowCount() == 1
-    assert "Item 3" in visible_item_texts
+    def test_sort_by_update_timestamp_asc(self):
+        self.proxy_model.set_sort_key_type(1) # 1: Update Timestamp
+        self.proxy_model.sort(0, Qt.SortOrder.AscendingOrder)
+        # 更新日時で昇順ソート (古いものが先頭)
+        expected_order = [info["name"] for info in sorted(self.files_info, key=lambda x: x["timestamp_offset"])]
+        self.assertEqual(self.get_proxy_item_texts(), expected_order)
 
-def test_filter_positive_prompt_comma_separated_or_mode(filter_proxy_model, source_model_with_data):
-    """Test filtering by comma-separated keywords in positive_prompt (OR logic within field)."""
-    # Item 1: positive_prompt: "an apple on a table"
-    # Item 3: positive_prompt: "apple, orange"
-    # We search for "table" OR "orange" in positive_prompt.
-    # The overall search mode is OR, which also makes _keywords_match use OR for within-field keywords.
-    filter_proxy_model.set_positive_prompt_filter("table, orange")
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("OR") 
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    # Item 1 matches "table"
-    # Item 2 has "orange" in positive_prompt (from item2.setData in fixture)
-    # Item 3 matches "orange" (and "apple")
-    # So, Item 1, Item 2, and Item 3 should be visible.
-    # Let's re-check fixture data for Item 2: positive_prompt: "orange"
-    # Item 1: "an apple on a table" -> matches "table"
-    # Item 2: "orange" -> matches "orange"
-    # Item 3: "apple, orange" -> matches "orange"
-    assert filter_proxy_model.rowCount() == 3
-    assert "Item 1" in visible_item_texts
-    assert "Item 2" in visible_item_texts
-    assert "Item 3" in visible_item_texts
+    def test_sort_by_update_timestamp_desc(self):
+        self.proxy_model.set_sort_key_type(1) # 1: Update Timestamp
+        self.proxy_model.sort(0, Qt.SortOrder.DescendingOrder)
+        # 更新日時で降順ソート (新しいものが先頭)
+        expected_order = [info["name"] for info in sorted(self.files_info, key=lambda x: x["timestamp_offset"], reverse=True)]
+        self.assertEqual(self.get_proxy_item_texts(), expected_order)
 
-def test_filter_case_insensitivity(filter_proxy_model, source_model_with_data):
-    """Test that filtering is case-insensitive."""
-    # Item 1: positive_prompt: "an apple on a table"
-    filter_proxy_model.set_positive_prompt_filter("APPLE") # Uppercase keyword
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND")
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    # Item 1 and Item 3 contain "apple" (case-insensitive)
-    assert filter_proxy_model.rowCount() == 2
-    assert "Item 1" in visible_item_texts
-    assert "Item 3" in visible_item_texts
+    def test_sort_by_load_order(self):
+        # 1. ソースモデルはsetUpで特定の順序でアイテムが追加されている
+        #    self.files_info の順序が「読み込み順」となる
 
-    # Test with mixed case in metadata and lowercase keyword
-    # Modify Item 4's positive_prompt for this test case in the fixture if needed,
-    # or add a new item. For now, let's assume Item 1's "apple" is sufficient.
-    # Let's test negative prompt with mixed case
-    # Item 2: negative_prompt: "a ripe banana"
-    filter_proxy_model.set_positive_prompt_filter("")
-    filter_proxy_model.set_negative_prompt_filter("BaNaNa") # Mixed case keyword
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
+        # 2. 「読み込み順」ソートを設定
+        self.proxy_model.set_sort_key_type(2) # 2 for load order
 
-    # Item 1 and Item 2 contain "banana" (case-insensitive)
-    assert filter_proxy_model.rowCount() == 2
-    assert "Item 1" in visible_item_texts
-    assert "Item 2" in visible_item_texts
+        # 3. 昇順ソートを実行
+        self.proxy_model.sort(0, Qt.SortOrder.AscendingOrder)
 
-def test_filter_whitespace_stripping(filter_proxy_model, source_model_with_data):
-    """Test that leading/trailing whitespace in filter keywords is stripped."""
-    # Item 1: positive_prompt: "an apple on a table"
-    filter_proxy_model.set_positive_prompt_filter(" apple ") # Keyword with spaces
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND")
-    
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-        
-    # Item 1 and Item 3 contain "apple"
-    assert filter_proxy_model.rowCount() == 2
-    assert "Item 1" in visible_item_texts
-    assert "Item 3" in visible_item_texts
+        # 4. プロキシモデルのアイテム順序を確認
+        #    期待する順序: self.files_info の "name" の順 (ソースモデルに追加した順)
+        proxy_items_asc_texts = self.get_proxy_item_texts()
+        expected_order_asc = [info["name"] for info in self.files_info]
+        self.assertEqual(proxy_items_asc_texts, expected_order_asc)
 
-    # Test with comma-separated keywords with spaces
-    # Item 3: positive_prompt: "apple, orange"
-    filter_proxy_model.set_positive_prompt_filter(" apple , orange ")
-    visible_item_texts = []
-    for i in range(filter_proxy_model.rowCount()):
-        proxy_index = filter_proxy_model.index(i, 0)
-        source_index = filter_proxy_model.mapToSource(proxy_index)
-        item_text = source_model_with_data.itemFromIndex(source_index).text()
-        visible_item_texts.append(item_text)
-    
-    assert filter_proxy_model.rowCount() == 1
-    assert "Item 3" in visible_item_texts
+        # 5. 降順ソートを実行
+        self.proxy_model.sort(0, Qt.SortOrder.DescendingOrder)
 
-def test_filter_empty_or_missing_metadata_fields(filter_proxy_model, source_model_with_data):
-    """Test filtering behavior with items having empty or missing metadata fields."""
-    # Case 1: Filter for "sky" in positive_prompt. Item 5 should match.
-    # Other fields are empty/missing in Item 5, so they should pass if their filters are empty.
-    filter_proxy_model.set_positive_prompt_filter("sky")
-    filter_proxy_model.set_negative_prompt_filter("")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND")
-    
-    visible_item_texts = [filter_proxy_model.mapToSource(filter_proxy_model.index(i, 0)).data(Qt.ItemDataRole.DisplayRole) for i in range(filter_proxy_model.rowCount())]
-    assert filter_proxy_model.rowCount() == 1
-    assert "Item 5" in visible_item_texts
+        # 6. プロキシモデルのアイテム順序を確認
+        #    期待する順序: self.files_info の "name" の逆順
+        proxy_items_desc_texts = self.get_proxy_item_texts()
+        expected_order_desc = [info["name"] for info in reversed(self.files_info)]
+        self.assertEqual(proxy_items_desc_texts, expected_order_desc)
 
-    # Case 2: Filter for "tree" in negative_prompt. Item 6 should match.
-    # Item 6 has empty positive_prompt.
-    filter_proxy_model.set_positive_prompt_filter("")
-    filter_proxy_model.set_negative_prompt_filter("tree")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND")
+    def test_set_sort_key_type_does_not_auto_sort(self):
+        # 初期状態 (ソースモデルの順序)
+        initial_order = self.get_proxy_item_texts()
 
-    visible_item_texts = [filter_proxy_model.mapToSource(filter_proxy_model.index(i, 0)).data(Qt.ItemDataRole.DisplayRole) for i in range(filter_proxy_model.rowCount())]
-    assert filter_proxy_model.rowCount() == 1
-    assert "Item 6" in visible_item_texts
+        # ソートキータイプを変更しても、sort()が呼ばれるまでは順序は変わらないはず
+        self.proxy_model.set_sort_key_type(0) # ファイル名
+        self.assertEqual(self.get_proxy_item_texts(), initial_order, "set_sort_key_type should not sort by itself")
 
-    # Case 3: Filter for something in positive_prompt that Item 6 (empty positive) shouldn't match.
-    filter_proxy_model.set_positive_prompt_filter("anything")
-    filter_proxy_model.set_negative_prompt_filter("tree") # Item 6 matches this
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("AND") # "anything" AND "tree"
+        self.proxy_model.set_sort_key_type(1) # 更新日時
+        self.assertEqual(self.get_proxy_item_texts(), initial_order, "set_sort_key_type should not sort by itself")
 
-    # Item 6 should NOT appear because its positive_prompt is "" which doesn't contain "anything".
-    visible_item_texts = [filter_proxy_model.mapToSource(filter_proxy_model.index(i, 0)).data(Qt.ItemDataRole.DisplayRole) for i in range(filter_proxy_model.rowCount())]
-    assert "Item 6" not in visible_item_texts
-    assert filter_proxy_model.rowCount() == 0 # Assuming no other item matches "anything" AND "tree"
+    def test_filter_positive_prompt_and_mode(self):
+        # AND検索モード
+        self.proxy_model.set_search_mode("AND")
+        self.proxy_model.set_positive_prompt_filter("apple")
+        # "apple" を含むのは c_old.png と a_new.jpg
+        self.assertEqual(len(self.get_proxy_item_texts()), 2)
+        self.assertIn("c_old.png", self.get_proxy_item_texts())
+        self.assertIn("a_new.jpg", self.get_proxy_item_texts())
 
-    # Case 4: OR mode, filter for "sky" (Item 5) OR "tree" (Item 6)
-    filter_proxy_model.set_positive_prompt_filter("sky")
-    filter_proxy_model.set_negative_prompt_filter("tree")
-    filter_proxy_model.set_generation_info_filter("")
-    filter_proxy_model.set_search_mode("OR")
+        # AND検索モードでさらに絞り込み
+        self.proxy_model.set_negative_prompt_filter("orange") # "orange" を含むのは c_old.png と b_mid.webp
+        # "apple" AND "orange" にマッチするのは c_old.png のみ
+        self.assertEqual(len(self.get_proxy_item_texts()), 1)
+        self.assertIn("c_old.png", self.get_proxy_item_texts())
 
-    visible_item_texts = [filter_proxy_model.mapToSource(filter_proxy_model.index(i, 0)).data(Qt.ItemDataRole.DisplayRole) for i in range(filter_proxy_model.rowCount())]
-    assert filter_proxy_model.rowCount() == 2
-    assert "Item 5" in visible_item_texts
-    assert "Item 6" in visible_item_texts
+        # OR検索モード
+        self.proxy_model.set_search_mode("OR")
+        self.proxy_model.set_positive_prompt_filter("apple") # c_old.png, a_new.jpg
+        self.proxy_model.set_negative_prompt_filter("tree")  # b_mid.webp
+        # "apple" OR "tree" にマッチするのは c_old.png, a_new.jpg, b_mid.webp
+        self.assertEqual(len(self.get_proxy_item_texts()), 3)
 
+    def test_filter_clear(self):
+        self.proxy_model.set_positive_prompt_filter("apple")
+        self.assertNotEqual(len(self.get_proxy_item_texts()), len(self.files_info))
 
-# Dummy test can be removed or kept for basic sanity check
-# def test_dummy():
-# """A dummy test to ensure pytest setup is working."""
-# assert True
+        self.proxy_model.set_positive_prompt_filter("") # クリア
+        self.proxy_model.set_negative_prompt_filter("")
+        self.proxy_model.set_generation_info_filter("")
+
+        expected_order_after_clear = [info["name"] for info in self.files_info]
+        self.assertEqual(self.get_proxy_item_texts(), expected_order_after_clear)
+
+    def test_hidden_paths_filter(self):
+        # 最初にすべてのアイテムが表示されていることを確認
+        self.assertEqual(len(self.get_proxy_item_texts()), len(self.files_info))
+
+        # 1つのアイテムを非表示にする
+        path_to_hide = os.path.join(self.test_data_dir, self.files_info[0]["name"])
+        self.proxy_model.set_hidden_paths({path_to_hide})
+        self.proxy_model.invalidateFilter() # 明示的にフィルタを再適用
+        self.assertEqual(len(self.get_proxy_item_texts()), len(self.files_info) - 1)
+        self.assertNotIn(self.files_info[0]["name"], self.get_proxy_item_texts())
+
+        # 非表示リストをクリア
+        self.proxy_model.set_hidden_paths(set())
+        self.proxy_model.invalidateFilter()
+        self.assertEqual(len(self.get_proxy_item_texts()), len(self.files_info))
+
+        # 存在しないパスを非表示にしても影響がないことを確認
+        self.proxy_model.set_hidden_paths({"non_existent_file.png"})
+        self.proxy_model.invalidateFilter() # 明示的にフィルタを再適用
+        self.assertEqual(len(self.get_proxy_item_texts()), len(self.files_info))
+
+if __name__ == '__main__':
+    unittest.main()

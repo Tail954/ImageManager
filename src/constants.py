@@ -31,3 +31,8 @@ METADATA_DIALOG_GEOMETRY = "metadata_dialog_geometry"
 # --- Image File Extensions ---
 # (drop_window.py から移動)
 IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp', '.heic', '.heif']
+
+# ★★★ フォルダ選択時の初期ソート設定 ★★★
+INITIAL_SORT_ORDER_ON_FOLDER_SELECT = "initial_sort_order_on_folder_select"
+SORT_BY_LOAD_ORDER_ALWAYS = "sort_by_load_order_always" # 常に読み込み順
+SORT_BY_LAST_SELECTED = "sort_by_last_selected"         # 前回選択されたソート順を維持

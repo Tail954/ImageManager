@@ -25,12 +25,11 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         self.setFilterKeyColumn(-1) 
         self.setSortRole(METADATA_ROLE) # ソートにMETADATA_ROLEを使用
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-
-        # カスタムソート用のキータイプ (0: ファイル名, 1: 更新日時)
+        # カスタムソート用のキータイプ (0: ファイル名, 1: 更新日時, 2: 読み込み順)
         self._sort_key_type = 0 
 
     def set_sort_key_type(self, key_type: int):
-        """ソートに使用するキーのタイプを設定します (0: ファイル名, 1: 更新日時)。"""
+        """ソートに使用するキーのタイプを設定します (0: ファイル名, 1: 更新日時, 2: 読み込み順)。"""
         logger.debug(f"MetadataFilterProxyModel.set_sort_key_type called. key_type: {key_type}")
         if self._sort_key_type != key_type:
             self._sort_key_type = key_type
@@ -308,6 +307,10 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
             val_left = left_metadata.get('update_timestamp', 0.0) # キャッシュされた更新日時を使用
             val_right = right_metadata.get('update_timestamp', 0.0)
             # logger.debug(f"lessThan (ModDate): Comparing {val_left} with {val_right}")
+        elif self._sort_key_type == 2: # 読み込み順 (ソースモデルの行インデックス) でソート
+            val_left = source_left.row()
+            val_right = source_right.row()
+            # logger.debug(f"lessThan (LoadOrder): Comparing row {val_left} with row {val_right}")
         else:
             logger.warning(f"lessThan: Unknown _sort_key_type: {self._sort_key_type}. Falling back to False.")
             return False
