@@ -260,7 +260,7 @@ if __name__ == '__main__':
     current_size_test = 128
     current_preview_mode_test = PREVIEW_MODE_FIT
     current_delete_empty_folders_test = True # ★★★ 追加 ★★★
-    current_initial_sort_test = SORT_BY_LAST_SELECTED # ★★★ 追加 ★★★
+    current_initial_sort_test = SORT_BY_LOAD_ORDER_ALWAYS # ★★★ デフォルト変更 ★★★
 
     # Create a dummy app_settings.json for testing if it doesn't exist
     dummy_settings_for_test = {
@@ -289,7 +289,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     # Test with initial right click action
     current_right_click_action_test = dummy_settings_for_test.get(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
-    current_initial_sort_test = dummy_settings_for_test.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LAST_SELECTED) # ★★★ 追加 ★★★
+    current_initial_sort_test = dummy_settings_for_test.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS) # ★★★ デフォルト変更 ★★★
     current_delete_empty_folders_test = dummy_settings_for_test.get(DELETE_EMPTY_FOLDERS_ENABLED, True) # ★★★ 追加 ★★★
     dialog = SettingsDialog(
         current_thumbnail_size=current_size_test,

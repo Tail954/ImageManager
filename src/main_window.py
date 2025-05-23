@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
         self.current_sort_button_id = 0 # デフォルトは "ファイル名 ↑" (ID: 0)
         self.load_start_time = None # For load time measurement
         self.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA # Default value
-        self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
+        self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT # Default value
         self.delete_empty_folders_enabled = True # デフォルトは有効
         self.initial_folder_sort_setting = SORT_BY_LAST_SELECTED # ★★★ 追加: デフォルトは前回選択 ★★★
 
@@ -322,14 +322,14 @@ class MainWindow(QMainWindow):
         logger.info(f"再帰検索設定を読み込みました: {'ON' if self.recursive_search_enabled else 'OFF'}")
 
         # ソート設定
-        self.current_sort_button_id = self.app_settings.get("sort_button_id", 0) # デフォルトはID 0 (ファイル名 ↑)
+        self.current_sort_button_id = self.app_settings.get("sort_button_id", 4) # ★★★ デフォルトを「読み込み順」(ID:4) に変更 ★★★
         if hasattr(self, 'sort_button_group'): # UI要素が存在すれば更新
             button_to_check = self.sort_button_group.button(self.current_sort_button_id)
             if button_to_check:
                 pass # _apply_initial_sort_from_settings でチェックされる (sort_button_groupはui_managerが持つ)
             else:
                 logger.warning(f"保存されたソートボタンIDが無効: {self.current_sort_button_id}。0にリセットします。")
-                self.current_sort_button_id = 0
+                self.current_sort_button_id = 4 # ★★★ リセット先も「読み込み順」(ID:4) に変更 ★★★
         logger.info(f"ソートボタンIDを読み込みました: {self.current_sort_button_id} ('{self.sort_criteria_map.get(self.current_sort_button_id, {}).get('name', 'N/A')}')")
 
         # ★★★ 追加: 空フォルダ削除設定 ★★★
@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
         logger.info(f"空フォルダ削除設定を読み込みました: {'有効' if self.delete_empty_folders_enabled else '無効'}")
 
         # ★★★ 追加: フォルダ選択時の初期ソート設定 ★★★
-        self.initial_folder_sort_setting = self.app_settings.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LAST_SELECTED)
+        self.initial_folder_sort_setting = self.app_settings.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS) # ★★★ デフォルトを「常に読み込み順」に変更 ★★★
         logger.info(f"フォルダ選択時の初期ソート設定を読み込みました: {self.initial_folder_sort_setting}")
 
         # ★★★ ウィンドウジオメトリの読み込み (適用は __init__ の最後で行う) ★★★
