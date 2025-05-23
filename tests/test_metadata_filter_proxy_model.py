@@ -153,26 +153,63 @@ class TestMetadataFilterProxyModel(unittest.TestCase):
         self.proxy_model.set_sort_key_type(1) # 更新日時
         self.assertEqual(self.get_proxy_item_texts(), initial_order, "set_sort_key_type should not sort by itself")
 
-    def test_filter_positive_prompt_and_mode(self):
-        # AND検索モード
+    def test_filter_inter_field_AND_intra_field_AND(self):
+        """項目間AND、項目内ANDのテスト"""
         self.proxy_model.set_search_mode("AND")
-        self.proxy_model.set_positive_prompt_filter("apple")
-        # "apple" を含むのは c_old.png と a_new.jpg
-        self.assertEqual(len(self.get_proxy_item_texts()), 2)
-        self.assertIn("c_old.png", self.get_proxy_item_texts())
-        self.assertIn("a_new.jpg", self.get_proxy_item_texts())
-
-        # AND検索モードでさらに絞り込み
-        self.proxy_model.set_negative_prompt_filter("orange") # "orange" を含むのは c_old.png と b_mid.webp
-        # "apple" AND "orange" にマッチするのは c_old.png のみ
+        self.proxy_model.set_positive_prompt_filter("apple,banana") # Positive: apple AND banana
+        self.proxy_model.set_negative_prompt_filter("orange")       # Negative: orange
+        # Expected: c_old.png (positive: "apple banana", negative: "orange")
         self.assertEqual(len(self.get_proxy_item_texts()), 1)
         self.assertIn("c_old.png", self.get_proxy_item_texts())
 
-        # OR検索モード
+    def test_filter_inter_field_AND_intra_field_OR(self):
+        """項目間AND、項目内ORのテスト"""
         self.proxy_model.set_search_mode("OR")
-        self.proxy_model.set_positive_prompt_filter("apple") # c_old.png, a_new.jpg
-        self.proxy_model.set_negative_prompt_filter("tree")  # b_mid.webp
-        # "apple" OR "tree" にマッチするのは c_old.png, a_new.jpg, b_mid.webp
+        self.proxy_model.set_positive_prompt_filter("apple")    # Positive: apple
+        self.proxy_model.set_negative_prompt_filter("orange")   # Negative: orange
+        self.proxy_model.set_generation_info_filter("steps 10") # Generation: steps 10
+        # Expected: c_old.png (positive: "apple banana", negative: "orange", generation: "steps 10")
+        #   Positive "apple" -> True (c_old, a_new)
+        #   Negative "orange" -> True (c_old, b_mid)
+        #   Generation "steps 10" -> True (c_old)
+        #   All True for c_old.png
+        self.assertEqual(len(self.get_proxy_item_texts()), 1)
+        self.assertIn("c_old.png", self.get_proxy_item_texts())
+
+    def test_filter_inter_field_AND_intra_field_OR_no_match_due_to_inter_AND(self):
+        """項目間AND、項目内ORだが、項目間AND条件でマッチしないケース"""
+        self.proxy_model.set_search_mode("OR")
+        self.proxy_model.set_positive_prompt_filter("apple")  # c_old.png, a_new.jpg
+        self.proxy_model.set_negative_prompt_filter("sky")    # a_new.jpg
+        self.proxy_model.set_generation_info_filter("steps 10") # c_old.png
+        # Positive "apple" -> c_old, a_new
+        # Negative "sky" -> a_new
+        # Generation "steps 10" -> c_old
+        # (apple OR sky OR steps 10) AND (apple OR sky OR steps 10) AND (apple OR sky OR steps 10)
+        # Item c_old: P(T), N(F), G(T) -> AND -> False
+        # Item a_new: P(T), N(T), G(F) -> AND -> False
+        # Item b_mid: P(F), N(F), G(F) -> AND -> False
+        # 期待: マッチなし
+        self.assertEqual(len(self.get_proxy_item_texts()), 0)
+
+    def test_filter_inter_field_AND_intra_field_OR_single_field_active(self):
+        """項目間AND、項目内ORで、1つのフィルタ項目のみアクティブなケース"""
+        self.proxy_model.set_search_mode("OR")
+        self.proxy_model.set_positive_prompt_filter("banana") # c_old.png, b_mid.webp
+        self.proxy_model.set_negative_prompt_filter("")
+        self.proxy_model.set_generation_info_filter("")
+        # Expected: c_old.png, b_mid.webp
+        self.assertEqual(len(self.get_proxy_item_texts()), 2)
+        self.assertIn("c_old.png", self.get_proxy_item_texts())
+        self.assertIn("b_mid.webp", self.get_proxy_item_texts())
+
+    def test_filter_inter_field_AND_all_fields_empty(self):
+        """項目間ANDで、すべてのフィルタ項目が空のケース"""
+        self.proxy_model.set_search_mode("AND") # モードは影響しないはず
+        self.proxy_model.set_positive_prompt_filter("")
+        self.proxy_model.set_negative_prompt_filter("")
+        self.proxy_model.set_generation_info_filter("")
+        # Expected: 全アイテム表示
         self.assertEqual(len(self.get_proxy_item_texts()), 3)
 
     def test_filter_clear(self):

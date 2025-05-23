@@ -1,14 +1,14 @@
 # g:\vscodeGit\ImageManager\tests\test_main_window.py
 import pytest
 from PyQt6.QtWidgets import QApplication, QTreeView, QListView, QLineEdit, QPushButton, QRadioButton, QComboBox, QProgressDialog, QMessageBox, QMainWindow, QButtonGroup
+from unittest.mock import patch, MagicMock, call # ★★★ unittest.mock から patch, MagicMock, call をインポート ★★★
 
 import sys
 import os
 # Ensure src directory is in Python path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from PyQt6.QtCore import Qt, QItemSelectionModel, QModelIndex, QDir, QThread, QPoint # Added QThread, QPoint
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFileSystemModel, QCloseEvent, QImage, QPixmap, QIcon # Added QImage, QPixmap for spec, QIcon
-from unittest.mock import MagicMock, patch, call
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFileSystemModel, QCloseEvent, QImage, QPixmap, QIcon
 import os # os is already imported, but good to have it near path ops
 import time # For sleep
 import shutil # For creating dummy folders/files
@@ -16,7 +16,8 @@ import unittest # For TestCase structure if preferred
 
 # Assuming src is in PYTHONPATH or tests are run from project root
 from src.main_window import MainWindow
-from src.dialog_manager import DialogManager
+from src.ui_manager import UIManager # ★★★ UIManager をインポート ★★★
+from src.dialog_manager import DialogManager # DialogManager のインポートを確認
 from src.file_operation_manager import FileOperationManager
 from src.constants import METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, RIGHT_CLICK_ACTION_METADATA, WC_FORMAT_HASH_COMMENT
 from src.metadata_filter_proxy_model import MetadataFilterProxyModel # ★★★ NameError 修正: Import を追加 ★★★
@@ -170,6 +171,63 @@ class TestMainWindowBase(unittest.TestCase):
     def create_file(self, file_path, content="dummy"):
         with open(file_path, "w") as f:
             f.write(content)
+
+    @patch('src.main_window.logger')
+    @patch.object(MainWindow, 'statusBar', new_callable=MagicMock) # statusBarメソッド自体をモック化
+    # @patch.object(UIManager, 'apply_filters_preserving_selection') # このパッチは削除
+    def test_apply_filters_preserve_selection_true_calls_ui_manager(self, mock_statusbar_method, mock_logger): # 引数から mock_ui_apply_filters_preserving を削除
+        # Arrange
+        # MainWindowのui_managerはセットアップでモック化されたインスタンスです。
+        # そのインスタンスのメソッドをテスト内でパッチします。
+        self.window.ui_manager.positive_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.negative_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.generation_info_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.and_radio_button = MagicMock(spec=QRadioButton)
+
+        self.window.ui_manager.positive_prompt_filter_edit.text.return_value = "positive_text"
+        self.window.ui_manager.negative_prompt_filter_edit.text.return_value = "negative_text"
+        self.window.ui_manager.generation_info_filter_edit.text.return_value = "info_text"
+        self.window.ui_manager.and_radio_button.isChecked.return_value = True # AND検索
+
+        self.window.deselect_all_thumbnails = MagicMock()
+
+        # Act
+        # テスト内で、self.window.ui_manager インスタンスのメソッドをパッチ
+        with patch.object(self.window.ui_manager, 'apply_filters_preserving_selection') as mock_apply_preserving_on_instance:
+            self.window.apply_filters(preserve_selection=True)
+
+            # Assert
+            mock_apply_preserving_on_instance.assert_called_once_with(
+                "positive_text", "negative_text", "info_text", "AND"
+            )
+            self.window.deselect_all_thumbnails.assert_not_called()
+    @patch('src.main_window.logger')
+    @patch.object(MainWindow, 'statusBar', new_callable=MagicMock) # statusBarメソッド自体をモック化
+    def test_apply_filters_preserve_selection_false(self, mock_statusbar_method, mock_logger):
+        # Arrange
+        self.window.deselect_all_thumbnails = MagicMock()
+        # MainWindowが持つ実際のui_managerインスタンスのfilter_proxy_modelをモック化
+        self.window.ui_manager.filter_proxy_model = MagicMock(spec=MetadataFilterProxyModel)
+        self.window.ui_manager.positive_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.negative_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.generation_info_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.and_radio_button = MagicMock(spec=QRadioButton)
+
+        self.window.ui_manager.positive_prompt_filter_edit.text.return_value = "test_filter"
+        self.window.ui_manager.negative_prompt_filter_edit.text.return_value = ""
+        self.window.ui_manager.generation_info_filter_edit.text.return_value = ""
+        self.window.ui_manager.and_radio_button.isChecked.return_value = True # AND検索
+
+        # Act
+        self.window.apply_filters(preserve_selection=False)
+
+        # Assert
+        self.window.deselect_all_thumbnails.assert_called_once()
+        self.window.ui_manager.filter_proxy_model.set_search_mode.assert_called_with("AND")
+        self.window.ui_manager.filter_proxy_model.set_positive_prompt_filter.assert_called_with("test_filter")
+        self.window.ui_manager.filter_proxy_model.set_negative_prompt_filter.assert_called_with("")
+        self.window.ui_manager.filter_proxy_model.set_generation_info_filter.assert_called_with("")
+        self.window.ui_manager.filter_proxy_model.invalidateFilter.assert_called_once()
 
 # --- Test Classes ---
 

@@ -695,32 +695,32 @@ class MainWindow(QMainWindow):
         self._update_status_bar_info()
 
     def apply_filters(self, preserve_selection=False):
-        # logger.info(f"apply_filters: START - Preserve selection: {preserve_selection}") # 削除
-        if not preserve_selection:
-            # logger.info("apply_filters: Calling deselect_all_thumbnails...") # 削除
-            self.deselect_all_thumbnails()
-            # logger.info(f"apply_filters: deselect_all_thumbnails finished in ... seconds.") # 削除
+        if self.is_loading_thumbnails:
+            logger.info("apply_filters: サムネイル読み込み中のため、フィルタ適用はスキップされました。")
+            return
 
-        if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由 ★★★
-            search_mode = "AND" if self.ui_manager.and_radio_button.isChecked() else "OR" # ★★★ UIManager経由 ★★★
-            # logger.info("apply_filters: Setting filter parameters...") # 削除
-            self.ui_manager.filter_proxy_model.set_search_mode(search_mode) # ★★★ UIManager経由 ★★★
-            self.ui_manager.filter_proxy_model.set_positive_prompt_filter(self.ui_manager.positive_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            self.ui_manager.filter_proxy_model.set_negative_prompt_filter(self.ui_manager.negative_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            self.ui_manager.filter_proxy_model.set_generation_info_filter(self.ui_manager.generation_info_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            # logger.info(f"apply_filters: Filter parameters set in ... seconds.") # 削除
-
-            # フィルタ条件設定後、明示的にinvalidateを呼び出して再フィルタリングと再ソートを促す
-            # logger.info("apply_filters: Calling filter_proxy_model.invalidateFilter()...") # 削除
-            self.ui_manager.filter_proxy_model.invalidateFilter() # ★★★ UIManager経由 ★★★ invalidate() から invalidateFilter() に変更
-            # logger.info(f"apply_filters: filter_proxy_model.invalidateFilter() finished in ... seconds.") # 削除
+        if preserve_selection:
+            logger.info("apply_filters: 選択状態を維持してフィルタを適用します。")
+            # UIManager の新しいメソッドを呼び出す
+            self.ui_manager.apply_filters_preserving_selection(
+                self.ui_manager.positive_prompt_filter_edit.text(),
+                self.ui_manager.negative_prompt_filter_edit.text(),
+                self.ui_manager.generation_info_filter_edit.text(),
+                "AND" if self.ui_manager.and_radio_button.isChecked() else "OR"
+            )
         else:
-            logger.warning("Filter proxy model not yet initialized for apply_filters call.") # Warning level might be appropriate
-
-        # logger.info("apply_filters: Calling _update_status_bar_info...") # 削除
-        self._update_status_bar_info()
-        # logger.info(f"apply_filters: _update_status_bar_info finished in ... seconds.") # 削除
-        # logger.info(f"apply_filters: END - Total time: ... seconds.") # 削除
+            logger.info("apply_filters: 選択状態を解除してフィルタを適用します。")
+            self.deselect_all_thumbnails()
+            if self.ui_manager.filter_proxy_model:
+                search_mode = "AND" if self.ui_manager.and_radio_button.isChecked() else "OR"
+                self.ui_manager.filter_proxy_model.set_search_mode(search_mode)
+                self.ui_manager.filter_proxy_model.set_positive_prompt_filter(self.ui_manager.positive_prompt_filter_edit.text())
+                self.ui_manager.filter_proxy_model.set_negative_prompt_filter(self.ui_manager.negative_prompt_filter_edit.text())
+                self.ui_manager.filter_proxy_model.set_generation_info_filter(self.ui_manager.generation_info_filter_edit.text())
+                self.ui_manager.filter_proxy_model.invalidateFilter()
+            else:
+                logger.warning("Filter proxy model not yet initialized for apply_filters call.")
+            self._update_status_bar_info()
 
     # --- ★★★ START: DropWindow連携メソッド ★★★ ---
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
