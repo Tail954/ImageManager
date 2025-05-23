@@ -17,7 +17,8 @@ from src.constants import (
     PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
     RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
     WC_FORMAT_HASH_COMMENT,
-    DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ インポート追加 ★★★
+    DELETE_EMPTY_FOLDERS_ENABLED,
+    INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # ★★★ 初期ソート設定 ★★★
     THUMBNAIL_RIGHT_CLICK_ACTION, WC_COMMENT_OUTPUT_FORMAT, # For app_settings keys
     METADATA_ROLE, Qt as ConstantsQt # For item data roles
 )
@@ -37,6 +38,7 @@ class TestDialogManager(unittest.TestCase):
         self.mock_main_window.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA
         self.mock_main_window.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
         self.mock_main_window.is_loading_thumbnails = False
+        self.mock_main_window.initial_folder_sort_setting = SORT_BY_LAST_SELECTED # ★★★ 追加: 初期ソート設定のモック ★★★
         self.mock_main_window.delete_empty_folders_enabled = True # ★★★ 追加: MainWindowのモックに属性を追加 ★★★
         self.mock_main_window.app_settings = {} # Mock app_settings dictionary
         self.mock_main_window._write_app_settings_file = MagicMock()
@@ -72,6 +74,7 @@ class TestDialogManager(unittest.TestCase):
         mock_dialog_instance.get_selected_right_click_action.return_value = self.mock_main_window.thumbnail_right_click_action
         mock_dialog_instance.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
         mock_dialog_instance.get_selected_thumbnail_size.return_value = self.mock_main_window.current_thumbnail_size
+        mock_dialog_instance.get_selected_initial_folder_sort_setting.return_value = self.mock_main_window.initial_folder_sort_setting # ★★★ 追加 ★★★
         mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
 
         self.dialog_manager.open_settings_dialog()
@@ -82,6 +85,7 @@ class TestDialogManager(unittest.TestCase):
             current_preview_mode=self.mock_main_window.image_preview_mode,
             current_right_click_action=self.mock_main_window.thumbnail_right_click_action,
             current_wc_comment_format=self.mock_main_window.wc_creator_comment_format,
+            current_initial_folder_sort_setting=self.mock_main_window.initial_folder_sort_setting, # ★★★ 追加 ★★★
             current_delete_empty_folders_setting=self.mock_main_window.delete_empty_folders_enabled, # ★★★ 追加 ★★★
             parent=self.mock_main_window
         )
@@ -102,6 +106,7 @@ class TestDialogManager(unittest.TestCase):
         mock_dialog_instance.get_selected_preview_mode.return_value = self.mock_main_window.image_preview_mode
         mock_dialog_instance.get_selected_right_click_action.return_value = self.mock_main_window.thumbnail_right_click_action
         mock_dialog_instance.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
+        mock_dialog_instance.get_selected_initial_folder_sort_setting.return_value = self.mock_main_window.initial_folder_sort_setting # ★★★ 追加 ★★★
         mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
 
         # Mock QMessageBox.question to simulate user confirming "Ok"
@@ -113,8 +118,39 @@ class TestDialogManager(unittest.TestCase):
         mock_qmessagebox_question.assert_called_once() # Ensure confirmation was asked
         self.mock_main_window.apply_thumbnail_size_change.assert_called_once_with(new_thumb_size)
         self.assertEqual(self.mock_main_window.app_settings["thumbnail_size"], new_thumb_size)
+        self.assertEqual(self.mock_main_window.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT], self.mock_main_window.initial_folder_sort_setting) # ★★★ 追加 ★★★
         self.assertEqual(self.mock_main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED], self.mock_main_window.delete_empty_folders_enabled) # ★★★ 追加 ★★★
         self.mock_main_window._write_app_settings_file.assert_called_once()
+
+    @patch('src.dialog_manager.SettingsDialog')
+    def test_open_settings_dialog_accepted_initial_folder_sort_changed(self, MockSettingsDialog):
+        """Test changing initial folder sort setting."""
+        mock_dialog_instance = MockSettingsDialog.return_value
+        mock_dialog_instance.exec.return_value = True # OK
+
+        new_initial_sort = SORT_BY_LOAD_ORDER_ALWAYS # Change from default SORT_BY_LAST_SELECTED
+        mock_dialog_instance.get_selected_initial_folder_sort_setting.return_value = new_initial_sort
+        # Other settings remain unchanged
+        mock_dialog_instance.get_selected_thumbnail_size.return_value = self.mock_main_window.current_thumbnail_size
+        mock_dialog_instance.get_selected_preview_mode.return_value = self.mock_main_window.image_preview_mode
+        mock_dialog_instance.get_selected_right_click_action.return_value = self.mock_main_window.thumbnail_right_click_action
+        mock_dialog_instance.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
+        mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled
+
+        self.dialog_manager.open_settings_dialog()
+
+        self.assertEqual(self.mock_main_window.initial_folder_sort_setting, new_initial_sort)
+        self.assertEqual(self.mock_main_window.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT], new_initial_sort)
+        self.mock_main_window._write_app_settings_file.assert_called_once()
+        # Ensure other settings were not inadvertently affected
+        self.assertEqual(self.mock_main_window.app_settings["thumbnail_size"], self.mock_main_window.current_thumbnail_size)
+        self.assertEqual(self.mock_main_window.app_settings["image_preview_mode"], self.mock_main_window.image_preview_mode)
+        self.assertEqual(self.mock_main_window.app_settings[THUMBNAIL_RIGHT_CLICK_ACTION], self.mock_main_window.thumbnail_right_click_action)
+        self.assertEqual(self.mock_main_window.app_settings[WC_COMMENT_OUTPUT_FORMAT], self.mock_main_window.wc_creator_comment_format)
+        self.assertEqual(self.mock_main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED], self.mock_main_window.delete_empty_folders_enabled)
+
+        # Reset mock_main_window's setting for subsequent tests if necessary
+        self.mock_main_window.initial_folder_sort_setting = SORT_BY_LAST_SELECTED
 
     @patch('src.dialog_manager.SettingsDialog')
     def test_open_settings_dialog_cancelled(self, MockSettingsDialog):

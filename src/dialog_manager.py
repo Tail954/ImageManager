@@ -12,7 +12,8 @@ from .drop_window import DropWindow
 from .constants import (
     APP_SETTINGS_FILE,
     THUMBNAIL_RIGHT_CLICK_ACTION,
-    WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
+    WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, DELETE_EMPTY_FOLDERS_ENABLED,
+    INITIAL_SORT_ORDER_ON_FOLDER_SELECT, # ★★★ 初期ソート設定キーを追加 ★★★
     Qt as ConstantsQt # Renamed Qt from constants to avoid clash
 )
 # Qt from QtCore is used for Qt.ItemDataRole etc.
@@ -39,6 +40,7 @@ class DialogManager:
                 current_right_click_action=self.main_window.thumbnail_right_click_action,
                 current_wc_comment_format=self.main_window.wc_creator_comment_format,
                 current_delete_empty_folders_setting=self.main_window.delete_empty_folders_enabled, # ★★★ 追加 ★★★
+                current_initial_folder_sort_setting=self.main_window.initial_folder_sort_setting, # ★★★ 追加: 初期ソート設定を渡す ★★★
                 parent=self.main_window
             )
 
@@ -62,6 +64,12 @@ class DialogManager:
             if self.main_window.delete_empty_folders_enabled != new_delete_empty_folders_setting: # ★★★ 追加 ★★★
                 self.main_window.delete_empty_folders_enabled = new_delete_empty_folders_setting # ★★★ 追加 ★★★
                 logger.info(f"空フォルダ削除設定が変更されました: {'有効' if self.main_window.delete_empty_folders_enabled else '無効'}") # ★★★ 追加 ★★★
+
+            # ★★★ 追加: 初期ソート設定の処理 ★★★
+            new_initial_folder_sort = self.settings_dialog_instance.get_selected_initial_folder_sort_setting()
+            if self.main_window.initial_folder_sort_setting != new_initial_folder_sort:
+                self.main_window.initial_folder_sort_setting = new_initial_folder_sort
+                logger.info(f"フォルダ選択時の初期ソート設定が変更されました: {self.main_window.initial_folder_sort_setting}")
 
             new_size = self.settings_dialog_instance.get_selected_thumbnail_size()
             reply_ok_for_size_change = True # Assume OK if no confirmation needed or confirmed
@@ -94,6 +102,7 @@ class DialogManager:
             self.main_window.app_settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.main_window.thumbnail_right_click_action
             self.main_window.app_settings[WC_COMMENT_OUTPUT_FORMAT] = self.main_window.wc_creator_comment_format
             self.main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
+            self.main_window.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = self.main_window.initial_folder_sort_setting # ★★★ 追加 ★★★
             self.main_window._write_app_settings_file()
         self.settings_dialog_instance = None
 
