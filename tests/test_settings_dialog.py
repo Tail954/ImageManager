@@ -6,14 +6,15 @@ from PyQt6.QtWidgets import QApplication, QWidget, QDialog # Added QDialog
 import sys
 import os
 # Ensure src directory is in Python path for imports
+from unittest.mock import patch # ★★★ patch をインポート ★★★
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QPainter, QColor, QPaintEvent # Added QPaintEvent for paintEvent test
 
 # Assuming src is in PYTHONPATH or tests are run from project root
 from src.settings_dialog import ThumbnailSizePreviewWidget, SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM
-# FIX: Import WC_FORMAT_HASH_COMMENT and DELETE_EMPTY_FOLDERS_ENABLED from constants
-from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, WC_FORMAT_HASH_COMMENT
+# FIX: Import WC_FORMAT_HASH_COMMENT and other constants
+from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, WC_FORMAT_HASH_COMMENT, DELETE_EMPTY_FOLDERS_ENABLED, INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED
 
 
 # Fixture to create a QApplication instance for tests that need it
@@ -90,6 +91,7 @@ class TestSettingsDialog:
     DEFAULT_PREVIEW_MODE = PREVIEW_MODE_FIT
     DEFAULT_RIGHT_CLICK_ACTION = RIGHT_CLICK_ACTION_METADATA # Default for tests
     DEFAULT_DELETE_EMPTY_FOLDERS = True # ★★★ 追加: デフォルト値を定義 ★★★
+    DEFAULT_INITIAL_FOLDER_SORT = SORT_BY_LAST_SELECTED # ★★★ 追加: デフォルト値を定義 ★★★
 
     @pytest.fixture
     def dialog(self, qt_app, mocker):
@@ -104,7 +106,8 @@ class TestSettingsDialog:
             current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION, # Pass new arg
             # FIX: Add current_wc_comment_format argument
             current_wc_comment_format=WC_FORMAT_HASH_COMMENT, # Use a default value from constants
-            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
+            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
         )
         return dialog_instance
 
@@ -115,6 +118,7 @@ class TestSettingsDialog:
         assert dialog.initial_preview_mode == self.DEFAULT_PREVIEW_MODE
         assert dialog.initial_right_click_action == self.DEFAULT_RIGHT_CLICK_ACTION
         # FIX: Add assertion for initial_wc_comment_format
+        assert dialog.initial_folder_sort_setting == self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
         assert dialog.initial_delete_empty_folders_setting == self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
         assert dialog.initial_wc_comment_format == WC_FORMAT_HASH_COMMENT # Check if the passed value is stored
 
@@ -161,6 +165,14 @@ class TestSettingsDialog:
         # ★★★ 追加: delete_empty_folders_checkbox の初期化チェック ★★★
         assert dialog.delete_empty_folders_checkbox is not None
         assert dialog.delete_empty_folders_checkbox.isChecked() == self.DEFAULT_DELETE_EMPTY_FOLDERS
+
+        # ★★★ 追加: initial_folder_sort radio buttons の初期化チェック ★★★
+        assert dialog.sort_load_order_radio is not None
+        assert dialog.sort_last_selected_radio is not None
+        if self.DEFAULT_INITIAL_FOLDER_SORT == SORT_BY_LOAD_ORDER_ALWAYS:
+            assert dialog.sort_load_order_radio.isChecked()
+        else: # SORT_BY_LAST_SELECTED
+            assert dialog.sort_last_selected_radio.isChecked()
 
     def test_thumbnail_slider_changes_preview(self, dialog, mocker):
         mock_preview_set_size = mocker.patch.object(dialog.thumbnail_preview_widget, 'set_size')
@@ -218,6 +230,15 @@ class TestSettingsDialog:
         dialog.delete_empty_folders_checkbox.setChecked(False)
         assert dialog.get_selected_delete_empty_folders_setting() is False
 
+    # ★★★ 追加: get_selected_initial_folder_sort_setting のテスト ★★★
+    def test_get_selected_initial_folder_sort_setting(self, dialog):
+        dialog.sort_load_order_radio.setChecked(True)
+        assert dialog.get_selected_initial_folder_sort_setting() == SORT_BY_LOAD_ORDER_ALWAYS
+
+        dialog.sort_last_selected_radio.setChecked(True)
+        assert dialog.get_selected_initial_folder_sort_setting() == SORT_BY_LAST_SELECTED
+
+
     def test_accept_dialog(self, dialog, mocker):
         mock_super_accept = mocker.patch.object(QDialog, 'accept') # Mock QDialog.accept
         # _save_dialog_specific_settings was removed from SettingsDialog.accept
@@ -227,6 +248,40 @@ class TestSettingsDialog:
 
         # mock_save_specific.assert_called_once() # Removed
         mock_super_accept.assert_called_once() # Ensure dialog's accept is called
+
+    # ★★★ 追加: DialogManagerが設定を保存する際のダイアログの値取得を模倣するテスト ★★★
+    @patch('PyQt6.QtWidgets.QDialog.accept') # QDialog.accept() をモック化
+    def test_dialog_returns_correct_values_on_accept(self, mock_qdialog_accept, dialog, tmp_path):
+        """Test that dialog returns correct values via getters when accepted, simulating DialogManager."""
+        # Simulate changing settings in the dialog
+        new_thumb_size_index = 0 # 96px
+        new_thumb_size = self.AVAILABLE_SIZES[new_thumb_size_index]
+        dialog.thumbnail_size_slider.setValue(new_thumb_size_index)
+
+        dialog.original_zoom_mode_radio.setChecked(True)
+        dialog.menu_action_radio.setChecked(True)
+        dialog.wc_comment_format_combo.setCurrentIndex(1) # Assuming index 1 is different
+        dialog.delete_empty_folders_checkbox.setChecked(False)
+        dialog.sort_load_order_radio.setChecked(True) # Change to "always load order"
+
+        # Simulate DialogManager calling accept (which we've mocked to do nothing for QDialog itself)
+        # and then retrieving values
+        
+        # These would be called by DialogManager after dialog.exec() == True
+        retrieved_thumb_size = dialog.get_selected_thumbnail_size()
+        retrieved_preview_mode = dialog.get_selected_preview_mode()
+        retrieved_right_click_action = dialog.get_selected_right_click_action()
+        retrieved_wc_format = dialog.get_selected_wc_comment_format()
+        retrieved_delete_empty = dialog.get_selected_delete_empty_folders_setting()
+        retrieved_initial_sort = dialog.get_selected_initial_folder_sort_setting()
+
+        assert retrieved_thumb_size == new_thumb_size
+        assert retrieved_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM
+        assert retrieved_right_click_action == RIGHT_CLICK_ACTION_MENU
+        assert retrieved_wc_format == dialog.wc_comment_format_combo.itemData(1)
+        assert retrieved_delete_empty is False
+        assert retrieved_initial_sort == SORT_BY_LOAD_ORDER_ALWAYS
+
 
     # _save_dialog_specific_settings was removed from SettingsDialog, so this test is no longer applicable
     # def test_save_dialog_specific_settings(self, dialog):
@@ -259,7 +314,8 @@ class TestSettingsDialog:
             current_preview_mode=self.DEFAULT_PREVIEW_MODE,
             current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
             current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
-            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
+            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
         )
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_ORIGINAL_ZOOM
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM # Check if initial_preview_mode is also set
@@ -274,7 +330,8 @@ class TestSettingsDialog:
             current_preview_mode=self.DEFAULT_PREVIEW_MODE,
             current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
             current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
-            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
+            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
         )
         assert dialog_instance_2.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance_2.initial_preview_mode == PREVIEW_MODE_FIT
@@ -291,7 +348,8 @@ class TestSettingsDialog:
             current_preview_mode=self.DEFAULT_PREVIEW_MODE,
             current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
             current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
-            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
+            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
         )
         assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_FIT

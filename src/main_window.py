@@ -6,8 +6,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, QDialog,
      QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox, QStyledItemDelegate
-)
-from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
+) # yapf: disable
+from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent, QResizeEvent
 from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray # <--- ★QWIDGETSIZE_MAX のインポートを削除
 import os # For path operations
 from pathlib import Path # For path operations
@@ -37,18 +37,19 @@ from .full_image_dialog import FullImageDialog
 from .settings_dialog import SettingsDialog
 from .drop_window import DropWindow
 from .wc_creator_dialog import WCCreatorDialog
-from .metadata_utils import extract_image_metadata # Import shared metadata extraction
-from .dialog_manager import DialogManager # Import DialogManager
-from .file_operation_manager import FileOperationManager # New import
-from .ui_manager import UIManager # ★★★ UIManagerをインポート ★★★
+from .metadata_utils import extract_image_metadata
+from .dialog_manager import DialogManager
+from .file_operation_manager import FileOperationManager
+from .ui_manager import UIManager
 
 from .constants import (
     APP_SETTINGS_FILE,
     METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
     THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, 
-    DELETE_EMPTY_FOLDERS_ENABLED, # ★★★ 追加 ★★★
+    DELETE_EMPTY_FOLDERS_ENABLED,
+    INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # 初期ソート設定
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
-    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ★★★ ジオメトリ定数をインポート ★★★
+    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ジオメトリ定数をインポート
 )
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ class MainWindow(QMainWindow):
         # self.metadata_dialog_instance = None # DialogManagerが管理
         self.drop_window_instance = None # <--- ★追加: DropWindowのインスタンスを保持
         self.dialog_manager = DialogManager(self) # DialogManagerのインスタンス化
-        self.ui_manager = UIManager(self) # ★★★ UIManagerのインスタンス化 ★★★
+        self.ui_manager = UIManager(self) # UIManagerのインスタンス化
 
         self.setWindowTitle("ImageManager")
         self.setGeometry(100, 100, 1200, 800)
@@ -89,12 +90,14 @@ class MainWindow(QMainWindow):
             1: {"name": "ファイル名 降順", "key_type": 0, "order": Qt.SortOrder.DescendingOrder, "caption": "ファイル名 降順"},
             2: {"name": "更新日時 昇順", "key_type": 1, "order": Qt.SortOrder.AscendingOrder, "caption": "更新日時 昇順"},
             3: {"name": "更新日時 降順", "key_type": 1, "order": Qt.SortOrder.DescendingOrder, "caption": "更新日時 降順"},
+            4: {"name": "読み込み順", "key_type": 2, "order": Qt.SortOrder.AscendingOrder, "caption": "読み込み順"},
         }
         self.current_sort_button_id = 0 # デフォルトは "ファイル名 ↑" (ID: 0)
         self.load_start_time = None # For load time measurement
         self.thumbnail_right_click_action = RIGHT_CLICK_ACTION_METADATA # Default value
-        self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT
-        self.delete_empty_folders_enabled = True # ★★★ 追加: デフォルトは有効 ★★★
+        self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT # Default value
+        self.delete_empty_folders_enabled = True # デフォルトは有効
+        self.initial_folder_sort_setting = SORT_BY_LAST_SELECTED # ★★★ 追加: デフォルトは前回選択 ★★★
 
         self.file_operation_manager = FileOperationManager(self) # New instance
         self.file_operations = FileOperations(parent=self, file_op_manager=self.file_operation_manager) # Pass manager
@@ -226,7 +229,8 @@ class MainWindow(QMainWindow):
         self.app_settings["last_folder_path"] = self.current_folder_path
         self.app_settings["recursive_search"] = self.recursive_search_enabled
         # self.app_settings["sort_criteria_index"] = self.current_sort_criteria_index # 廃止 (コンボボックス用)
-        self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled # ★★★ 追加 ★★★
+        self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled
+        self.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = self.initial_folder_sort_setting
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
 
         # ★★★ ウィンドウジオメトリの保存 ★★★
@@ -258,7 +262,8 @@ class MainWindow(QMainWindow):
                 THUMBNAIL_RIGHT_CLICK_ACTION: self.thumbnail_right_click_action,
                 WC_COMMENT_OUTPUT_FORMAT: self.wc_creator_comment_format,
                 "last_folder_path": self.current_folder_path,
-                DELETE_EMPTY_FOLDERS_ENABLED: self.delete_empty_folders_enabled, # ★★★ 追加 ★★★
+                DELETE_EMPTY_FOLDERS_ENABLED: self.delete_empty_folders_enabled,
+                INITIAL_SORT_ORDER_ON_FOLDER_SELECT: self.initial_folder_sort_setting,
                 "recursive_search": self.recursive_search_enabled,
                 # "sort_criteria_index": self.current_sort_criteria_index, # 廃止
                 "sort_button_id": self.current_sort_button_id, # 新しいトグルボタンUI用
@@ -317,19 +322,23 @@ class MainWindow(QMainWindow):
         logger.info(f"再帰検索設定を読み込みました: {'ON' if self.recursive_search_enabled else 'OFF'}")
 
         # ソート設定
-        self.current_sort_button_id = self.app_settings.get("sort_button_id", 0) # デフォルトはID 0 (ファイル名 ↑)
+        self.current_sort_button_id = self.app_settings.get("sort_button_id", 4) # ★★★ デフォルトを「読み込み順」(ID:4) に変更 ★★★
         if hasattr(self, 'sort_button_group'): # UI要素が存在すれば更新
             button_to_check = self.sort_button_group.button(self.current_sort_button_id)
             if button_to_check:
                 pass # _apply_initial_sort_from_settings でチェックされる (sort_button_groupはui_managerが持つ)
             else:
                 logger.warning(f"保存されたソートボタンIDが無効: {self.current_sort_button_id}。0にリセットします。")
-                self.current_sort_button_id = 0
+                self.current_sort_button_id = 4 # ★★★ リセット先も「読み込み順」(ID:4) に変更 ★★★
         logger.info(f"ソートボタンIDを読み込みました: {self.current_sort_button_id} ('{self.sort_criteria_map.get(self.current_sort_button_id, {}).get('name', 'N/A')}')")
 
         # ★★★ 追加: 空フォルダ削除設定 ★★★
         self.delete_empty_folders_enabled = self.app_settings.get(DELETE_EMPTY_FOLDERS_ENABLED, True)
         logger.info(f"空フォルダ削除設定を読み込みました: {'有効' if self.delete_empty_folders_enabled else '無効'}")
+
+        # ★★★ 追加: フォルダ選択時の初期ソート設定 ★★★
+        self.initial_folder_sort_setting = self.app_settings.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS) # ★★★ デフォルトを「常に読み込み順」に変更 ★★★
+        logger.info(f"フォルダ選択時の初期ソート設定を読み込みました: {self.initial_folder_sort_setting}")
 
         # ★★★ ウィンドウジオメトリの読み込み (適用は __init__ の最後で行う) ★★★
         if main_geom_str := self.app_settings.get(MAIN_WINDOW_GEOMETRY):
@@ -350,6 +359,17 @@ class MainWindow(QMainWindow):
 
         if folder_path:
             logger.info(f"選択されたフォルダ: {folder_path}")
+
+            # ★★★ フォルダ選択時の初期ソート設定を適用 ★★★
+            if self.initial_folder_sort_setting == SORT_BY_LOAD_ORDER_ALWAYS:
+                self.current_sort_button_id = 4 # 「読み込み順」のID
+                logger.info(f"フォルダ選択時の初期ソート設定により、ソートを「読み込み順」(ID: {self.current_sort_button_id}) に設定します。")
+            else: # SORT_BY_LAST_SELECTED (またはデフォルト)
+                # current_sort_button_id は変更せず、前回終了時の値を維持 (既に _load_app_settings で読み込まれている)
+                logger.info(f"フォルダ選択時の初期ソート設定により、ソートを前回選択された順 (ID: {self.current_sort_button_id}) に設定します。")
+            # 現在の current_sort_button_id に基づいてUIボタンを更新
+            self._apply_initial_sort_from_settings()
+
             # ★★★ 設定に基づいて空フォルダ削除処理を実行 ★★★
             if self.delete_empty_folders_enabled and os.path.isdir(folder_path):
                 self._try_delete_empty_subfolders(folder_path) 
@@ -574,7 +594,21 @@ class MainWindow(QMainWindow):
 
         # ソートを実行 (is_loading_thumbnails が False になった後)
         if self.ui_manager.filter_proxy_model:
-            self._apply_sort_from_toggle_button(self.current_sort_button_id)
+            # ★★★ 「読み込み順」が選択されている場合は、明示的なソート処理をスキップ ★★★
+            load_order_sort_id = -1
+            for btn_id, criteria in self.sort_criteria_map.items():
+                if criteria.get("key_type") == 2: # key_type 2 が「読み込み順」
+                    load_order_sort_id = btn_id
+                    break
+            
+            if self.current_sort_button_id == load_order_sort_id:
+                logger.info(f"サムネイル読み込み完了。現在のソートは「読み込み順」(ID: {self.current_sort_button_id}) のため、明示的なソートはスキップします。")
+                # 「読み込み順」の場合、ソースモデルに追加された順序が維持されるため、
+                # filter_proxy_model.sort() を呼び出す必要はありません。
+                # フィルタリングは既に apply_filters で行われています。
+            else:
+                logger.info(f"サムネイル読み込み完了。現在のソート設定 (ボタンID: {self.current_sort_button_id}) をモデルに適用します。")
+                self._apply_sort_from_toggle_button(self.current_sort_button_id)
 
         self._update_status_bar_info()
         self.statusBar.showMessage("サムネイル読み込み完了", 5000)
@@ -661,84 +695,35 @@ class MainWindow(QMainWindow):
         self._update_status_bar_info()
 
     def apply_filters(self, preserve_selection=False):
-        # logger.info(f"apply_filters: START - Preserve selection: {preserve_selection}") # 削除
-        if not preserve_selection:
-            # logger.info("apply_filters: Calling deselect_all_thumbnails...") # 削除
-            self.deselect_all_thumbnails()
-            # logger.info(f"apply_filters: deselect_all_thumbnails finished in ... seconds.") # 削除
+        if self.is_loading_thumbnails:
+            logger.info("apply_filters: サムネイル読み込み中のため、フィルタ適用はスキップされました。")
+            return
 
-        if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由 ★★★
-            search_mode = "AND" if self.ui_manager.and_radio_button.isChecked() else "OR" # ★★★ UIManager経由 ★★★
-            # logger.info("apply_filters: Setting filter parameters...") # 削除
-            self.ui_manager.filter_proxy_model.set_search_mode(search_mode) # ★★★ UIManager経由 ★★★
-            self.ui_manager.filter_proxy_model.set_positive_prompt_filter(self.ui_manager.positive_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            self.ui_manager.filter_proxy_model.set_negative_prompt_filter(self.ui_manager.negative_prompt_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            self.ui_manager.filter_proxy_model.set_generation_info_filter(self.ui_manager.generation_info_filter_edit.text()) # ★★★ UIManager経由 ★★★
-            # logger.info(f"apply_filters: Filter parameters set in ... seconds.") # 削除
-
-            # フィルタ条件設定後、明示的にinvalidateを呼び出して再フィルタリングと再ソートを促す
-            # logger.info("apply_filters: Calling filter_proxy_model.invalidateFilter()...") # 削除
-            self.ui_manager.filter_proxy_model.invalidateFilter() # ★★★ UIManager経由 ★★★ invalidate() から invalidateFilter() に変更
-            # logger.info(f"apply_filters: filter_proxy_model.invalidateFilter() finished in ... seconds.") # 削除
+        if preserve_selection:
+            logger.info("apply_filters: 選択状態を維持してフィルタを適用します。")
+            # UIManager の新しいメソッドを呼び出す
+            self.ui_manager.apply_filters_preserving_selection(
+                self.ui_manager.positive_prompt_filter_edit.text(),
+                self.ui_manager.negative_prompt_filter_edit.text(),
+                self.ui_manager.generation_info_filter_edit.text(),
+                "AND" if self.ui_manager.and_radio_button.isChecked() else "OR"
+            )
         else:
-            logger.warning("Filter proxy model not yet initialized for apply_filters call.") # Warning level might be appropriate
-
-        # logger.info("apply_filters: Calling _update_status_bar_info...") # 削除
-        self._update_status_bar_info()
-        # logger.info(f"apply_filters: _update_status_bar_info finished in ... seconds.") # 削除
-        # logger.info(f"apply_filters: END - Total time: ... seconds.") # 削除
+            logger.info("apply_filters: 選択状態を解除してフィルタを適用します。")
+            self.deselect_all_thumbnails()
+            if self.ui_manager.filter_proxy_model:
+                search_mode = "AND" if self.ui_manager.and_radio_button.isChecked() else "OR"
+                self.ui_manager.filter_proxy_model.set_search_mode(search_mode)
+                self.ui_manager.filter_proxy_model.set_positive_prompt_filter(self.ui_manager.positive_prompt_filter_edit.text())
+                self.ui_manager.filter_proxy_model.set_negative_prompt_filter(self.ui_manager.negative_prompt_filter_edit.text())
+                self.ui_manager.filter_proxy_model.set_generation_info_filter(self.ui_manager.generation_info_filter_edit.text())
+                self.ui_manager.filter_proxy_model.invalidateFilter()
+            else:
+                logger.warning("Filter proxy model not yet initialized for apply_filters call.")
+            self._update_status_bar_info()
 
     # --- ★★★ START: DropWindow連携メソッド ★★★ ---
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
-
-    def _open_wc_creator_dialog(self):
-        logger.info("ワイルドカード作成ツールを起動します。")
-
-        selected_proxy_indexes = self.ui_manager.thumbnail_view.selectionModel().selectedIndexes() # ★★★ UIManager経由 ★★★
-        if not selected_proxy_indexes:
-            QMessageBox.information(self, "情報", "作成対象の画像をサムネイル一覧から選択してください。")
-            return
-
-        selected_files_for_wc = []
-        metadata_for_wc = []
-
-        processed_paths = set() # 選択されたアイテムの重複処理を避ける
-        
-        for proxy_idx in selected_proxy_indexes:
-            if proxy_idx.column() == 0:
-                source_idx = self.ui_manager.filter_proxy_model.mapToSource(proxy_idx) # ★★★ UIManager経由 ★★★
-                item = self.ui_manager.source_thumbnail_model.itemFromIndex(source_idx) # ★★★ UIManager経由 ★★★
-                if item:
-                    file_path = item.data(Qt.ItemDataRole.UserRole)
-                    if file_path and file_path not in processed_paths:
-                        metadata = item.data(METADATA_ROLE)
-                        if not isinstance(metadata, dict):
-                            metadata = self.metadata_cache.get(file_path)
-                        if not isinstance(metadata, dict): # キャッシュにもなければ再抽出
-                            logger.warning(f"WC Creator用メタデータ: {file_path} のキャッシュが見つからないため、再抽出します。")
-                            metadata = extract_image_metadata(file_path)
-                            self.metadata_cache[file_path] = metadata
-                        
-                        if isinstance(metadata, dict):
-                            selected_files_for_wc.append(file_path)
-                            metadata_for_wc.append(metadata)
-                            processed_paths.add(file_path)
-                        else:
-                            logger.error(f"WC Creator: {file_path} のメタデータ取得に失敗しました。スキップします。")
-
-        if not selected_files_for_wc:
-            QMessageBox.warning(self, "エラー", "有効な画像データが見つかりませんでした。")
-            return
-
-        logger.info(f"{len(selected_files_for_wc)} 個の画像をWC Creatorに渡します。")
-        wc_dialog = WCCreatorDialog(
-            selected_file_paths=selected_files_for_wc,
-            metadata_list=metadata_for_wc,
-            output_format=self.wc_creator_comment_format,
-            parent=self
-        )
-        wc_dialog.exec()
-        logger.info("プロンプト整形ツールを閉じました。")
 
     # --- File Operation Completion Logic (called by FileOperationManager) ---
     def _process_file_op_completion(self, result):
@@ -1002,7 +987,7 @@ class MainWindow(QMainWindow):
         logger.info("アプリケーションを終了します。")
         super().closeEvent(event)
 
-    def resizeEvent(self, event: QCloseEvent): # QResizeEvent の方が適切ですが、既存の型ヒントを維持します
+    def resizeEvent(self, event: QResizeEvent): # ★ 型ヒントを QResizeEvent に変更
         """ウィンドウリサイズ時に左パネルのオーバーレイウィジェットのサイズを調整し、
         左パネルの最大幅を固定値に設定する。
         """

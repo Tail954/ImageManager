@@ -5,13 +5,13 @@ from PyQt6.QtWidgets import (
     QSplitter, QFrame, QLineEdit, QRadioButton, QButtonGroup, QListView,
     QAbstractItemView
 )
-from PyQt6.QtGui import QFileSystemModel, QStandardItemModel
-from PyQt6.QtCore import Qt, QSize, QDir
+from PyQt6.QtGui import QFileSystemModel, QStandardItemModel, QStandardItem
+from PyQt6.QtCore import Qt, QSize, QDir, QItemSelection, QItemSelectionModel, QModelIndex
 
 from .thumbnail_list_view import ToggleSelectionListView
 from .thumbnail_delegate import ThumbnailDelegate
 from .metadata_filter_proxy_model import MetadataFilterProxyModel
-# from .constants import METADATA_ROLE # 必要に応じてインポート
+from .constants import SELECTION_ORDER_ROLE # SELECTION_ORDER_ROLE をインポート
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class UIManager:
         self.sort_filename_desc_button = None
         self.sort_date_asc_button = None
         self.sort_date_desc_button = None
+        self.sort_load_order_button = None # ★★★ 追加: 読み込み順ソートボタン ★★★
         self.and_radio_button = None
         self.or_radio_button = None
         self.search_mode_button_group = None
@@ -150,6 +151,7 @@ class UIManager:
             1: ("ファイル名 降順", "sort_filename_desc_button"),
             2: ("更新日時 昇順", "sort_date_asc_button"),
             3: ("更新日時 降順", "sort_date_desc_button"),
+            4: ("読み込み順", "sort_load_order_button"), # ★★★ 追加 ★★★
         }
         
         row1_layout = QHBoxLayout()
@@ -176,6 +178,13 @@ class UIManager:
         row2_layout.addWidget(getattr(self, buttons_map[3][1]))
         sort_options_layout.addLayout(row2_layout)
 
+        # ★★★ 追加: 読み込み順ボタンを新しい行に追加 ★★★
+        row3_layout = QHBoxLayout()
+        setattr(self, buttons_map[4][1], QPushButton(self.mw.sort_criteria_map[4]["caption"]))
+        getattr(self, buttons_map[4][1]).setCheckable(True)
+        self.sort_button_group.addButton(getattr(self, buttons_map[4][1]), 4)
+        row3_layout.addWidget(getattr(self, buttons_map[4][1]))
+        sort_options_layout.addLayout(row3_layout)
         self.sort_button_group.idClicked.connect(self.mw._apply_sort_from_toggle_button)
         return sort_options_group_box
 
@@ -196,19 +205,19 @@ class UIManager:
         filter_layout.addLayout(search_mode_layout)
 
         self.positive_prompt_filter_edit = QLineEdit(placeholderText="Positive Prompt を含む...")
-        self.positive_prompt_filter_edit.returnPressed.connect(self.mw.apply_filters)
+        self.positive_prompt_filter_edit.returnPressed.connect(lambda: self.mw.apply_filters(preserve_selection=True))
         filter_layout.addWidget(self.positive_prompt_filter_edit)
 
         self.negative_prompt_filter_edit = QLineEdit(placeholderText="Negative Prompt を含む...")
-        self.negative_prompt_filter_edit.returnPressed.connect(self.mw.apply_filters)
+        self.negative_prompt_filter_edit.returnPressed.connect(lambda: self.mw.apply_filters(preserve_selection=True))
         filter_layout.addWidget(self.negative_prompt_filter_edit)
 
         self.generation_info_filter_edit = QLineEdit(placeholderText="Generation Info を含む...")
-        self.generation_info_filter_edit.returnPressed.connect(self.mw.apply_filters)
+        self.generation_info_filter_edit.returnPressed.connect(lambda: self.mw.apply_filters(preserve_selection=True))
         filter_layout.addWidget(self.generation_info_filter_edit)
 
         self.apply_filter_button = QPushButton("フィルタ適用")
-        self.apply_filter_button.clicked.connect(self.mw.apply_filters)
+        self.apply_filter_button.clicked.connect(lambda: self.mw.apply_filters(preserve_selection=True))
         filter_layout.addWidget(self.apply_filter_button)
         return filter_group_box
 
@@ -312,3 +321,88 @@ class UIManager:
         if self.thumbnail_view:
             self.thumbnail_view.setIconSize(QSize(self.mw.current_thumbnail_size, self.mw.current_thumbnail_size))
             self.thumbnail_view.setGridSize(QSize(self.mw.current_thumbnail_size + 10, self.mw.current_thumbnail_size + 10))
+
+    def apply_filters_preserving_selection(self, positive_text, negative_text, generation_text, search_mode):
+        """
+        フィルタを適用し、可能な限り現在の選択状態を維持します。
+        """
+        logger.debug(f"UIManager.apply_filters_preserving_selection called. Filters: P='{positive_text}', N='{negative_text}', G='{generation_text}', Mode='{search_mode}'")
+        main_window = self.mw # MainWindow への参照
+        selection_model = self.thumbnail_view.selectionModel()
+
+        if not selection_model:
+            logger.warning("apply_filters_preserving_selection: Thumbnail view selection model not available.")
+            return
+
+        # 1. 現在の選択状態を保存 (ファイルパスのセットとして)
+        #    コピーモードの場合は、QStandardItem の参照も保持して、後で順序を復元できるようにする。
+        previously_selected_paths = set()
+        # (item_ref, original_ui_order_number) のタプルをリストで保持
+        previously_selected_copy_items_info = []
+
+        current_selected_proxy_indexes = selection_model.selectedIndexes()
+
+        logger.debug(f"  Current selected proxy indexes count: {len(current_selected_proxy_indexes)}")
+        if main_window.is_copy_mode:
+            # main_window.copy_selection_order (QStandardItemのリスト) を信頼する
+            for i, item_ref in enumerate(main_window.copy_selection_order):
+                path = item_ref.data(Qt.ItemDataRole.UserRole)
+                if path:
+                    previously_selected_paths.add(path)
+                    # SELECTION_ORDER_ROLE は1から始まるUI上の番号
+                    order_role_val = item_ref.data(SELECTION_ORDER_ROLE)
+                    previously_selected_copy_items_info.append((item_ref, order_role_val if order_role_val is not None else i + 1))
+            logger.debug(f"  Copy Mode: previously_selected_paths (from copy_selection_order, count: {len(previously_selected_paths)}): {sorted(list(previously_selected_paths))[:5]}")
+        else:
+            for proxy_idx in current_selected_proxy_indexes:
+                if proxy_idx.column() == 0: # 最初の列のインデックスのみ処理
+                    source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
+                    item = self.source_thumbnail_model.itemFromIndex(source_idx)
+                    if item:
+                        path = item.data(Qt.ItemDataRole.UserRole)
+                        if path:
+                            previously_selected_paths.add(path)
+            logger.debug(f"  Move Mode: previously_selected_paths (from selectionModel, count: {len(previously_selected_paths)}): {list(previously_selected_paths)[:5]}")
+        
+        # logger.debug(f"UIManager: Preserving selection for {len(previously_selected_paths)} paths.") # Redundant with above
+
+        # 2. フィルタをプロキシモデルに設定 & 適用
+        logger.debug("  Setting filter parameters on proxy model and calling invalidateFilter...")
+        self.filter_proxy_model.set_search_mode(search_mode)
+        self.filter_proxy_model.set_positive_prompt_filter(positive_text)
+        self.filter_proxy_model.set_negative_prompt_filter(negative_text)
+        self.filter_proxy_model.set_generation_info_filter(generation_text)
+        self.filter_proxy_model.invalidateFilter() # これによりビューが更新される
+        logger.debug(f"  invalidateFilter called. Proxy model row count after filter: {self.filter_proxy_model.rowCount()}")
+
+        # 3. 選択を復元
+        new_selection_to_apply_on_view = QItemSelection()
+        
+        # フィルタ後に表示されるアイテムで、かつ以前選択されていたアイテムを収集
+        # ソースモデルをイテレートする
+        for row in range(self.source_thumbnail_model.rowCount()):
+            source_item = self.source_thumbnail_model.item(row)
+            if not source_item: continue
+
+            file_path = source_item.data(Qt.ItemDataRole.UserRole)
+            if file_path in previously_selected_paths: # 以前選択されていたパスか
+                source_index = self.source_thumbnail_model.indexFromItem(source_item)
+                proxy_index = self.filter_proxy_model.mapFromSource(source_index)
+                if proxy_index.isValid(): # フィルタ後も表示されているか
+                    # logger.debug(f"    Restoring selection for path: {file_path}, proxy_index: {proxy_index.row()}")
+                    new_selection_to_apply_on_view.select(proxy_index, proxy_index)
+        
+        logger.debug(f"  Constructed new_selection_to_apply_on_view with {len(new_selection_to_apply_on_view.indexes())} proxy indexes.")
+
+        # 4. ビューの選択を更新
+        #    QItemSelectionModel.ClearAndSelect を使用すると、
+        #    既存の選択をクリアし、新しい選択を適用し、selectionChanged シグナルが発行される。
+        #    MainWindow.handle_thumbnail_selection_changed がこのシグナルを受けて、
+        #    selected_file_paths や copy_selection_order (コピーモード時) を適切に更新する。
+        logger.debug("  Calling selection_model.select with ClearAndSelect flag.")
+        # selectionChangedシグナルが発火するように、ブロックせずに実行
+        selection_model.select(new_selection_to_apply_on_view, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        
+        # main_window._update_status_bar_info() は handle_thumbnail_selection_changed の中で呼ばれるので、
+        # ここでは直接呼び出さない。
+        logger.debug(f"UIManager.apply_filters_preserving_selection finished. Selection restoration command issued for {len(new_selection_to_apply_on_view.indexes())} items in view.")

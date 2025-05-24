@@ -1,14 +1,14 @@
 # g:\vscodeGit\ImageManager\tests\test_main_window.py
 import pytest
 from PyQt6.QtWidgets import QApplication, QTreeView, QListView, QLineEdit, QPushButton, QRadioButton, QComboBox, QProgressDialog, QMessageBox, QMainWindow, QButtonGroup
+from unittest.mock import patch, MagicMock, call # ★★★ unittest.mock から patch, MagicMock, call をインポート ★★★
 
 import sys
 import os
 # Ensure src directory is in Python path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from PyQt6.QtCore import Qt, QItemSelectionModel, QModelIndex, QDir, QThread, QPoint # Added QThread, QPoint
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFileSystemModel, QCloseEvent, QImage, QPixmap, QIcon # Added QImage, QPixmap for spec, QIcon
-from unittest.mock import MagicMock, patch, call
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFileSystemModel, QCloseEvent, QImage, QPixmap, QIcon
 import os # os is already imported, but good to have it near path ops
 import time # For sleep
 import shutil # For creating dummy folders/files
@@ -16,7 +16,8 @@ import unittest # For TestCase structure if preferred
 
 # Assuming src is in PYTHONPATH or tests are run from project root
 from src.main_window import MainWindow
-from src.dialog_manager import DialogManager
+from src.ui_manager import UIManager # ★★★ UIManager をインポート ★★★
+from src.dialog_manager import DialogManager # DialogManager のインポートを確認
 from src.file_operation_manager import FileOperationManager
 from src.constants import METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, RIGHT_CLICK_ACTION_METADATA, WC_FORMAT_HASH_COMMENT
 from src.metadata_filter_proxy_model import MetadataFilterProxyModel # ★★★ NameError 修正: Import を追加 ★★★
@@ -89,6 +90,9 @@ class TestMainWindowBase(unittest.TestCase):
         self.mock_ui_manager_instance.sort_button_group = MagicMock(spec=QButtonGroup)
         self.mock_ui_manager_instance.sort_filename_asc_button = MagicMock(spec=QPushButton)
         self.mock_ui_manager_instance.sort_date_desc_button = MagicMock(spec=QPushButton)
+        # ★★★ sort_load_order_button のモックと text() メソッドの戻り値を設定 ★★★
+        self.mock_ui_manager_instance.sort_load_order_button = MagicMock(spec=QPushButton)
+        self.mock_ui_manager_instance.sort_load_order_button.text.return_value = "読み込み順"
 
         # MainWindow.statusBar() メソッド (QMainWindowから継承) をモック化し、
         # MagicMockインスタンスを返すようにする
@@ -101,6 +105,13 @@ class TestMainWindowBase(unittest.TestCase):
         self.window.current_folder_path = self.base_path
         self.window.initial_dialog_path = self.base_path
         
+        # 「読み込み順」テスト用のフォルダとファイルを作成
+        self.test_image_dir_load_order = os.path.join(self.base_path, "images_for_load_order")
+        self.create_dir(self.test_image_dir_load_order)
+        self.dummy_files_load_order = ["c_load.png", "a_load.jpg", "b_load.webp"] # 意図的にファイル名順と異なる順序
+        for fname in self.dummy_files_load_order:
+            self.create_file(os.path.join(self.test_image_dir_load_order, fname), "dummy_load_order_content")
+
         # Mock the actual FileOperations instance within FileOperationManager
         # This is important because FileOperationManager instantiates FileOperations.
         # We need to mock the FileOperations instance that FileOperationManager will use.
@@ -140,6 +151,8 @@ class TestMainWindowBase(unittest.TestCase):
             self.window.deleteLater() # Schedule for deletion
             self.window = None
         self.remove_dir(self.base_path)
+        if hasattr(self, 'test_image_dir_load_order') and os.path.exists(self.test_image_dir_load_order):
+            self.remove_dir(self.test_image_dir_load_order) # ★★★ 追加: 読み込み順テスト用ディレクトリも削除 ★★★
         QApplication.processEvents() # Process deleteLater events
 
     @classmethod
@@ -159,6 +172,63 @@ class TestMainWindowBase(unittest.TestCase):
         with open(file_path, "w") as f:
             f.write(content)
 
+    @patch('src.main_window.logger')
+    @patch.object(MainWindow, 'statusBar', new_callable=MagicMock) # statusBarメソッド自体をモック化
+    # @patch.object(UIManager, 'apply_filters_preserving_selection') # このパッチは削除
+    def test_apply_filters_preserve_selection_true_calls_ui_manager(self, mock_statusbar_method, mock_logger): # 引数から mock_ui_apply_filters_preserving を削除
+        # Arrange
+        # MainWindowのui_managerはセットアップでモック化されたインスタンスです。
+        # そのインスタンスのメソッドをテスト内でパッチします。
+        self.window.ui_manager.positive_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.negative_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.generation_info_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.and_radio_button = MagicMock(spec=QRadioButton)
+
+        self.window.ui_manager.positive_prompt_filter_edit.text.return_value = "positive_text"
+        self.window.ui_manager.negative_prompt_filter_edit.text.return_value = "negative_text"
+        self.window.ui_manager.generation_info_filter_edit.text.return_value = "info_text"
+        self.window.ui_manager.and_radio_button.isChecked.return_value = True # AND検索
+
+        self.window.deselect_all_thumbnails = MagicMock()
+
+        # Act
+        # テスト内で、self.window.ui_manager インスタンスのメソッドをパッチ
+        with patch.object(self.window.ui_manager, 'apply_filters_preserving_selection') as mock_apply_preserving_on_instance:
+            self.window.apply_filters(preserve_selection=True)
+
+            # Assert
+            mock_apply_preserving_on_instance.assert_called_once_with(
+                "positive_text", "negative_text", "info_text", "AND"
+            )
+            self.window.deselect_all_thumbnails.assert_not_called()
+    @patch('src.main_window.logger')
+    @patch.object(MainWindow, 'statusBar', new_callable=MagicMock) # statusBarメソッド自体をモック化
+    def test_apply_filters_preserve_selection_false(self, mock_statusbar_method, mock_logger):
+        # Arrange
+        self.window.deselect_all_thumbnails = MagicMock()
+        # MainWindowが持つ実際のui_managerインスタンスのfilter_proxy_modelをモック化
+        self.window.ui_manager.filter_proxy_model = MagicMock(spec=MetadataFilterProxyModel)
+        self.window.ui_manager.positive_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.negative_prompt_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.generation_info_filter_edit = MagicMock(spec=QLineEdit)
+        self.window.ui_manager.and_radio_button = MagicMock(spec=QRadioButton)
+
+        self.window.ui_manager.positive_prompt_filter_edit.text.return_value = "test_filter"
+        self.window.ui_manager.negative_prompt_filter_edit.text.return_value = ""
+        self.window.ui_manager.generation_info_filter_edit.text.return_value = ""
+        self.window.ui_manager.and_radio_button.isChecked.return_value = True # AND検索
+
+        # Act
+        self.window.apply_filters(preserve_selection=False)
+
+        # Assert
+        self.window.deselect_all_thumbnails.assert_called_once()
+        self.window.ui_manager.filter_proxy_model.set_search_mode.assert_called_with("AND")
+        self.window.ui_manager.filter_proxy_model.set_positive_prompt_filter.assert_called_with("test_filter")
+        self.window.ui_manager.filter_proxy_model.set_negative_prompt_filter.assert_called_with("")
+        self.window.ui_manager.filter_proxy_model.set_generation_info_filter.assert_called_with("")
+        self.window.ui_manager.filter_proxy_model.invalidateFilter.assert_called_once()
+
 # --- Test Classes ---
 
 class TestMainWindowInitialization(TestMainWindowBase):
@@ -171,6 +241,13 @@ class TestMainWindowInitialization(TestMainWindowBase):
         self.assertTrue(self.window.recursive_search_enabled)
         self.assertIsInstance(self.window.dialog_manager, DialogManager)
         self.assertIsInstance(self.window.file_operation_manager, FileOperationManager)
+        # ★★★ 「読み込み順」ボタンの存在確認 (UIManager経由) ★★★
+        self.assertIsNotNone(self.window.ui_manager.sort_load_order_button, "Sort by load order button should exist")
+        self.assertEqual(self.window.ui_manager.sort_load_order_button.text(), "読み込み順")
+        # MainWindowが持つsort_criteria_mapの確認
+        self.assertIn(4, self.window.sort_criteria_map, "Sort criteria for ID 4 (load order) should exist in MainWindow")
+        self.assertEqual(self.window.sort_criteria_map[4]["caption"], "読み込み順")
+
 
 class TestMainWindowFolderSelectionAndLoading(TestMainWindowBase):
     @patch('src.main_window.QFileDialog.getExistingDirectory')
@@ -731,6 +808,65 @@ class TestMainWindowSortFunctionality(TestMainWindowBase):
         self.assertEqual(self.window.current_sort_button_id, 3)
         self.window.ui_manager.filter_proxy_model.set_sort_key_type.assert_called_with(1) # Update Date # ★★★ UIManager経由 ★★★
         self.window.ui_manager.filter_proxy_model.sort.assert_called_with(0, Qt.SortOrder.DescendingOrder) # ★★★ UIManager経由 ★★★
+
+        # ★★★ 「読み込み順」ソートボタンのテスト (ID 4) ★★★
+        self.window.ui_manager.filter_proxy_model.sort.reset_mock()
+        self.window.ui_manager.filter_proxy_model.set_sort_key_type.reset_mock()
+
+        self.window._apply_sort_from_toggle_button(4) # ID 4 を直接渡す
+        self.assertEqual(self.window.current_sort_button_id, 4)
+        self.window.ui_manager.filter_proxy_model.set_sort_key_type.assert_called_with(2) # Load Order (key_type 2)
+        self.window.ui_manager.filter_proxy_model.sort.assert_called_with(0, Qt.SortOrder.AscendingOrder) # Default to Ascending for load order
+
+class TestMainWindowSettings(TestMainWindowBase):
+    def test_save_and_load_settings_for_load_order_sort(self):
+        # 1. 「読み込み順」ソートを設定
+        self.window.current_sort_button_id = 4 # 「読み込み順」のID
+
+        # 2. 設定を保存
+        self.window._save_settings() # MainWindowのメソッドを直接呼び出し
+        # app_settings.json が作成され、正しい値が書き込まれていることを確認
+        # (ここでは _save_settings が正しく動作することを信頼し、ファイル内容の直接検証は省略)
+
+        # 3. 新しいMainWindowインスタンスで設定を読み込み
+        #    _load_app_settings がモック化されているため、直接呼び出して挙動を確認
+        new_window = MainWindow() # _load_app_settings (モック) が呼ばれる
+        # _load_app_settings のモックを解除して、実際の読み込み処理をテストする
+        self.load_settings_patcher.stop() # 一時的にモックを停止
+        new_window._load_app_settings() # 実際のメソッドを呼び出し
+        self.load_settings_patcher.start() # モックを再開
+
+        # 4. 読み込まれた設定値を確認
+        self.assertEqual(new_window.current_sort_button_id, 4, "Sort button ID for load order should be loaded")
+
+    def test_load_thumbnails_with_load_order_sort_selected_no_explicit_sort(self):
+        # 1. 「読み込み順」ソートを選択状態にする
+        self.window.current_sort_button_id = 4 # 「読み込み順」のID
+        # UIのボタン状態も合わせる (通常は _apply_initial_sort_from_settings で行われる)
+        mock_load_order_button = MagicMock(spec=QPushButton)
+        self.window.ui_manager.sort_button_group.button = MagicMock(return_value=mock_load_order_button) # button(4) がモックを返すように
+        self.window._apply_initial_sort_from_settings() # これでボタンがチェックされるはず
+        mock_load_order_button.setChecked.assert_called_with(True)
+
+        # 2. フォルダを読み込む
+        #    _apply_sort_from_toggle_button が呼ばれないことを確認
+        with patch.object(self.window, '_apply_sort_from_toggle_button') as mock_apply_sort:
+            # QDirIterator のモック設定
+            mock_iterator_instance = MagicMock()
+            mock_iterator_instance.hasNext.side_effect = [True, True, True, False] # 3 files
+            mock_iterator_instance.next.side_effect = [
+                os.path.join(self.test_image_dir_load_order, self.dummy_files_load_order[0]),
+                os.path.join(self.test_image_dir_load_order, self.dummy_files_load_order[1]),
+                os.path.join(self.test_image_dir_load_order, self.dummy_files_load_order[2]),
+            ]
+            with patch('src.main_window.QDirIterator', return_value=mock_iterator_instance):
+                self.window.load_thumbnails_from_folder(self.test_image_dir_load_order)
+            
+            # サムネイル読み込み完了まで待機 (テスト用に同期的に処理されるか、適切に待機)
+            if self.window.thumbnail_loader_thread and self.window.thumbnail_loader_thread.isRunning():
+                self.window.thumbnail_loader_thread.wait() # スレッドの終了を待つ
+            QApplication.processEvents() # UIイベントとシグナル処理
+            mock_apply_sort.assert_not_called()
 
 class TestMainWindowCloseEvent(TestMainWindowBase):
     @patch('src.main_window.MainWindow._save_settings')

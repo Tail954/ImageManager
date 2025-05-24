@@ -25,12 +25,11 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         self.setFilterKeyColumn(-1) 
         self.setSortRole(METADATA_ROLE) # ソートにMETADATA_ROLEを使用
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-
-        # カスタムソート用のキータイプ (0: ファイル名, 1: 更新日時)
+        # カスタムソート用のキータイプ (0: ファイル名, 1: 更新日時, 2: 読み込み順)
         self._sort_key_type = 0 
 
     def set_sort_key_type(self, key_type: int):
-        """ソートに使用するキーのタイプを設定します (0: ファイル名, 1: 更新日時)。"""
+        """ソートに使用するキーのタイプを設定します (0: ファイル名, 1: 更新日時, 2: 読み込み順)。"""
         logger.debug(f"MetadataFilterProxyModel.set_sort_key_type called. key_type: {key_type}")
         if self._sort_key_type != key_type:
             self._sort_key_type = key_type
@@ -173,74 +172,17 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         generation_match_field = self._keywords_match(generation_text_lower, self._generation_keywords_cache)
         # --- ★ ここまで ---
         # logger.debug(f"  filterAcceptsRow: Field matches for row {source_row} - P_match: {positive_match_field}, N_match: {negative_match_field}, G_match: {generation_match_field}")
+        # --- ★ 項目間の関係は常に AND とする ---
+        # 各項目内のキーワード検索 (positive_match_field など) は、
+        # UIのAND/ORラジオボタン (_search_mode) に基づいて _keywords_match で既に処理されている。
+        final_result = positive_match_field and negative_match_field and generation_match_field
+        # logger.debug(f"  filterAcceptsRow (Inter-field AND): Final result for row {source_row} (path: '{file_path_for_hiding_check}'): {final_result}")
+        return final_result
 
-        if self._search_mode == "AND":
-            # For AND mode, all active filters must be true.
-            # If a filter text is empty, its corresponding _match_field will be True from _keywords_match,
-            # so it doesn't prevent a match if other fields match.
-            final_and_result = positive_match_field and negative_match_field and generation_match_field
-            # logger.debug(f"  filterAcceptsRow (AND mode): Final result for row {source_row} (path: '{file_path_for_hiding_check}'): {final_and_result}")
-            # logger.info(f"filterAcceptsRow: END - AND mode for row {source_row}. Returning {final_and_result}.")
-            return final_and_result
-        
-        elif self._search_mode == "OR":
-            # For OR mode, at least one active filter must be true.
-            # A field is considered "active" for OR if its filter text is not empty.
-            # If all filter texts are empty, then all items should pass (handled by _keywords_match returning True).
+        # --- 従来のOR検索モードのロジックは削除 ---
+        # elif self._search_mode == "OR":
             # --- ★ キャッシュされたキーワードリストの空チェックに変更 ---
             # If all filter texts are empty, all _match_field will be True, so it returns True.
-            if not self._positive_keywords_cache and not self._negative_keywords_cache and not self._generation_keywords_cache:
-                # ソート問題用
-                #logger.info(f"  filterAcceptsRow (OR mode): No active keywords for row {source_row}. Returning True.")
-                #logger.info(f"filterAcceptsRow: END - OR mode (no active keywords) for row {source_row}. Returning True.")
-                return True
-
-            # At least one filter text is active. Accept if any *active* field matches.
-            accepted_by_or = False
-            if self._positive_keywords_cache and positive_match_field:
-                accepted_by_or = True
-            if self._negative_keywords_cache and negative_match_field:
-                accepted_by_or = True
-            if self._generation_keywords_cache and generation_match_field:
-                accepted_by_or = True
-            # ソート問題用
-            # logger.info(f"  filterAcceptsRow (OR mode): Initial accepted_by_or for row {source_row}: {accepted_by_or} (based on active fields matching)")
-            
-            # If no filter texts were active (e.g. all were empty strings but not None),
-            # the above logic might not set accepted_by_or.
-            # However, the _keywords_match for empty filter_keywords returns True.
-            # The logic needs to be: if any field has keywords AND matches, it's an OR pass.
-            # If a field has NO keywords, it does not contribute to an OR pass, nor does it block it.
-            
-            # Refined OR logic:
-            # If any field has keywords and its specific match is true, then the row is accepted.
-            # If all fields that *have* keywords do *not* match, then the row is rejected.
-            # If no fields have keywords, the row is accepted (as per _keywords_match behavior).
-
-            # Let's list the results of active filters
-            active_filter_results = []
-            if self._positive_keywords_cache:
-                active_filter_results.append(positive_match_field)
-            if self._negative_keywords_cache:
-                active_filter_results.append(negative_match_field)
-            if self._generation_keywords_cache:
-                active_filter_results.append(generation_match_field)
-            # ソート問題用
-            # logger.info(f"  filterAcceptsRow (OR mode): Active filter results list for row {source_row}: {active_filter_results}")
-            
-            if not active_filter_results: # No active filters (all filter texts were empty)
-                # This case should have been caught by the "if not positive_keywords and not negative_keywords..." check above.
-                # However, keeping it as a safeguard or for clarity.
-                # ソート問題用
-                # logger.info(f"  filterAcceptsRow (OR mode): No active_filter_results (should be redundant check) for row {source_row}. Returning True.")
-                # logger.info(f"filterAcceptsRow: END - OR mode (no active_filter_results) for row {source_row}. Returning True.")
-                return True # All items pass
-            
-            final_or_result = any(active_filter_results)
-            # logger.debug(f"  filterAcceptsRow (OR mode): Final OR result for row {source_row} (path: '{file_path_for_hiding_check}') from 'any(active_filter_results)': {final_or_result}")
-            # logger.info(f"filterAcceptsRow: END - OR mode for row {source_row}. Returning {final_or_result}.")
-            return final_or_result
-
         # logger.warning(f"filterAcceptsRow: Unknown search mode '{self._search_mode}' for row {source_row} (path: '{file_path_for_hiding_check}'). Returning False.") # 通常は発生しないはずなのでコメントアウト
         return False # Should not be reached if mode is AND/OR
 
@@ -308,6 +250,10 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
             val_left = left_metadata.get('update_timestamp', 0.0) # キャッシュされた更新日時を使用
             val_right = right_metadata.get('update_timestamp', 0.0)
             # logger.debug(f"lessThan (ModDate): Comparing {val_left} with {val_right}")
+        elif self._sort_key_type == 2: # 読み込み順 (ソースモデルの行インデックス) でソート
+            val_left = source_left.row()
+            val_right = source_right.row()
+            # logger.debug(f"lessThan (LoadOrder): Comparing row {val_left} with row {val_right}")
         else:
             logger.warning(f"lessThan: Unknown _sort_key_type: {self._sort_key_type}. Falling back to False.")
             return False
