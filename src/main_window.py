@@ -46,7 +46,8 @@ from .constants import (
     APP_SETTINGS_FILE,
     METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
     THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, 
-    DELETE_EMPTY_FOLDERS_ENABLED,
+    DELETE_EMPTY_FOLDERS_ENABLED, 
+    LAST_MOVE_DESTINATION_FOLDER, LAST_COPY_DESTINATION_FOLDER, # ファイル操作の最終宛先フォルダ
     INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # 初期ソート設定
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
     MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ジオメトリ定数をインポート
@@ -98,6 +99,8 @@ class MainWindow(QMainWindow):
         self.wc_creator_comment_format = WC_FORMAT_HASH_COMMENT # Default value
         self.delete_empty_folders_enabled = True # デフォルトは有効
         self.initial_folder_sort_setting = SORT_BY_LAST_SELECTED # ★★★ 追加: デフォルトは前回選択 ★★★
+        self.last_move_destination_folder = None # ★★★ 追加: 最後に使用した移動先フォルダ ★★★
+        self.last_copy_destination_folder = None # ★★★ 追加: 最後に使用したコピー先フォルダ ★★★
 
         self.file_operation_manager = FileOperationManager(self) # New instance
         self.file_operations = FileOperations(parent=self, file_op_manager=self.file_operation_manager) # Pass manager
@@ -232,6 +235,8 @@ class MainWindow(QMainWindow):
         self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled
         self.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = self.initial_folder_sort_setting
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
+        self.app_settings[LAST_MOVE_DESTINATION_FOLDER] = self.last_move_destination_folder
+        self.app_settings[LAST_COPY_DESTINATION_FOLDER] = self.last_copy_destination_folder
 
         # ★★★ ウィンドウジオメトリの保存 ★★★
         self.app_settings[MAIN_WINDOW_GEOMETRY] = self.saveGeometry().toBase64().data().decode('utf-8')
@@ -268,6 +273,8 @@ class MainWindow(QMainWindow):
                 # "sort_criteria_index": self.current_sort_criteria_index, # 廃止
                 "sort_button_id": self.current_sort_button_id, # 新しいトグルボタンUI用
                 MAIN_WINDOW_GEOMETRY: self.saveGeometry().toBase64().data().decode('utf-8'),
+                LAST_MOVE_DESTINATION_FOLDER: self.last_move_destination_folder,
+                LAST_COPY_DESTINATION_FOLDER: self.last_copy_destination_folder,
             }
             if self.metadata_dialog_last_geometry and isinstance(self.metadata_dialog_last_geometry, QByteArray):
                 settings_dict[METADATA_DIALOG_GEOMETRY] = self.metadata_dialog_last_geometry.toBase64().data().decode('utf-8')
@@ -347,6 +354,20 @@ class MainWindow(QMainWindow):
         if meta_geom_str := self.app_settings.get(METADATA_DIALOG_GEOMETRY):
             self.metadata_dialog_last_geometry = QByteArray.fromBase64(meta_geom_str.encode('utf-8'))
             logger.info(f"メタデータダイアログのジオメトリを読み込みました。")
+        
+        # ★★★ 追加: ファイル操作の最終宛先フォルダの読み込み ★★★
+        if lmd_val := self.app_settings.get(LAST_MOVE_DESTINATION_FOLDER):
+            if os.path.isdir(lmd_val):
+                self.last_move_destination_folder = lmd_val
+                logger.info(f"最終移動先フォルダパスを読み込みました: {self.last_move_destination_folder}")
+            else:
+                logger.warning(f"保存された最終移動先フォルダパスが無効または見つかりません: {lmd_val}")
+        if lcd_val := self.app_settings.get(LAST_COPY_DESTINATION_FOLDER):
+            if os.path.isdir(lcd_val):
+                self.last_copy_destination_folder = lcd_val
+                logger.info(f"最終コピー先フォルダパスを読み込みました: {self.last_copy_destination_folder}")
+            else:
+                logger.warning(f"保存された最終コピー先フォルダパスが無効または見つかりません: {lcd_val}")
 
 
     def select_folder(self):
@@ -730,6 +751,7 @@ class MainWindow(QMainWindow):
         # logger.info(f"_process_file_op_completion: START - Result: {result}") # 削除
         status = result.get('status', 'unknown')
         operation_type = result.get('operation_type', 'unknown')
+        destination_folder_op = result.get('destination_folder') # 操作後の実際の宛先フォルダ
         if status == 'cancelled':
             self.statusBar.showMessage("ファイル操作がキャンセルされました。", 5000)
             # logger.info(f"_process_file_op_completion: END - Cancelled. Total time: ... seconds.") # 削除
@@ -834,6 +856,9 @@ class MainWindow(QMainWindow):
                  self.statusBar.showMessage(f"{moved_count}個のファイルを移動しました。", 5000)
             elif not errors:
                  self.statusBar.showMessage("移動するファイルがありませんでした、または処理が完了しました。", 3000)
+            # ★★★ 移動成功時に最終移動先フォルダを更新 ★★★
+            if moved_count > 0 and destination_folder_op and os.path.isdir(destination_folder_op):
+                self.last_move_destination_folder = destination_folder_op
             elif errors and moved_count == 0:
                  self.statusBar.showMessage("ファイルの移動に失敗しました。", 3000)
         elif operation_type == "copy":
@@ -845,6 +870,9 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(f"{copied_count}個のファイルをコピーしました。", 5000)
             elif not errors:
                 self.statusBar.showMessage("コピーするファイルがありませんでした、または処理が完了しました。", 3000)
+            # ★★★ コピー成功時に最終コピー先フォルダを更新 ★★★
+            if copied_count > 0 and destination_folder_op and os.path.isdir(destination_folder_op):
+                self.last_copy_destination_folder = destination_folder_op
         if status == 'completed' and not errors:
             # logger.info(f"_process_file_op_completion: Operation '{operation_type}' completed without errors. Deselecting thumbnails.") # 削除
             self.deselect_all_thumbnails()

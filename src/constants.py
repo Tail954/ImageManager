@@ -26,6 +26,10 @@ DELETE_EMPTY_FOLDERS_ENABLED = "delete_empty_folders_enabled"
 MAIN_WINDOW_GEOMETRY = "main_window_geometry"
 METADATA_DIALOG_GEOMETRY = "metadata_dialog_geometry"
 
+# --- ★★★ 追加: ファイル操作時の最終宛先フォルダ ★★★ ---
+LAST_MOVE_DESTINATION_FOLDER = "last_move_destination_folder"
+LAST_COPY_DESTINATION_FOLDER = "last_copy_destination_folder"
+
 # --- ★★★ 追加終わり ★★★ ---
 
 # --- Image File Extensions ---
