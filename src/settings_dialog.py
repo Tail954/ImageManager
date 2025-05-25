@@ -90,7 +90,7 @@ class SettingsDialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         # --- Thumbnail Size Group ---
-        thumbnail_size_group = QGroupBox("サムネイルサイズ設定")
+        thumbnail_size_group = QGroupBox("サムネイルサイズ")
         thumbnail_size_layout = QVBoxLayout()
         slider_layout = QHBoxLayout()
         self.thumbnail_size_label = QLabel()
@@ -115,8 +115,23 @@ class SettingsDialog(QDialog):
         self.thumbnail_size_slider.valueChanged.connect(self._update_thumbnail_size_preview)
         self._update_thumbnail_size_preview(self.thumbnail_size_slider.value())
 
+        # --- Initial Folder Sort Group ---
+        initial_sort_group = QGroupBox("フォルダ選択時の初期ソート")
+        initial_sort_layout = QVBoxLayout()
+        self.sort_load_order_radio = QRadioButton("常に「読み込み順」でソート")
+        self.sort_last_selected_radio = QRadioButton("前回選択したソート順を維持")
+        self.initial_sort_button_group = QButtonGroup(self)
+        self.initial_sort_button_group.addButton(self.sort_load_order_radio, 0) # ID 0 for load order
+        self.initial_sort_button_group.addButton(self.sort_last_selected_radio, 1) # ID 1 for last selected
+        if self.initial_folder_sort_setting == SORT_BY_LOAD_ORDER_ALWAYS:
+            self.sort_load_order_radio.setChecked(True)
+        else: # Default to last selected or if the value is SORT_BY_LAST_SELECTED
+            self.sort_last_selected_radio.setChecked(True)
+        initial_sort_layout.addWidget(self.sort_load_order_radio); initial_sort_layout.addWidget(self.sort_last_selected_radio)
+        initial_sort_group.setLayout(initial_sort_layout); main_layout.addWidget(initial_sort_group)
+
         # --- Image Preview Mode Group ---
-        preview_mode_group = QGroupBox("画像表示ダイアログの表示モード")
+        preview_mode_group = QGroupBox("画像表示ダイアログ")
         preview_mode_layout = QVBoxLayout()
         self.fit_mode_radio = QRadioButton("ダイアログサイズに合わせて表示（フィット表示）")
         self.original_zoom_mode_radio = QRadioButton("原寸で表示（Ctrl+ホイールでズーム、ドラッグでスクロール）")
@@ -142,6 +157,15 @@ class SettingsDialog(QDialog):
         right_click_action_group.setLayout(right_click_action_layout)
         main_layout.addWidget(right_click_action_group)
 
+        # Empty Folder Deletion Group
+        empty_folder_group = QGroupBox("フォルダ操作設定")
+        empty_folder_layout = QVBoxLayout()
+        self.delete_empty_folders_checkbox = QCheckBox("フォルダ選択時に空のサブフォルダを検索して削除する")
+        self.delete_empty_folders_checkbox.setChecked(self.initial_delete_empty_folders_setting)
+        empty_folder_layout.addWidget(self.delete_empty_folders_checkbox)
+        empty_folder_group.setLayout(empty_folder_layout)
+        main_layout.addWidget(empty_folder_group)
+
         # --- WC Creator Comment Format Group ---
         wc_format_group = QGroupBox("ワイルドカード作成: コメント出力形式")
         wc_format_layout = QVBoxLayout()
@@ -160,30 +184,6 @@ class SettingsDialog(QDialog):
         wc_format_layout.addWidget(self.wc_comment_format_combo)
         wc_format_group.setLayout(wc_format_layout)
         main_layout.addWidget(wc_format_group)
-
-        # Empty Folder Deletion Group
-        empty_folder_group = QGroupBox("フォルダ操作設定")
-        empty_folder_layout = QVBoxLayout()
-        self.delete_empty_folders_checkbox = QCheckBox("フォルダ選択時に空のサブフォルダを検索して削除する")
-        self.delete_empty_folders_checkbox.setChecked(self.initial_delete_empty_folders_setting)
-        empty_folder_layout.addWidget(self.delete_empty_folders_checkbox)
-        empty_folder_group.setLayout(empty_folder_layout)
-        main_layout.addWidget(empty_folder_group)
-
-        # --- 追加: Initial Folder Sort Group ---
-        initial_sort_group = QGroupBox("フォルダ選択時の初期ソート")
-        initial_sort_layout = QVBoxLayout()
-        self.sort_load_order_radio = QRadioButton("常に「読み込み順」でソート")
-        self.sort_last_selected_radio = QRadioButton("前回選択したソート順を維持")
-        self.initial_sort_button_group = QButtonGroup(self)
-        self.initial_sort_button_group.addButton(self.sort_load_order_radio, 0) # ID 0 for load order
-        self.initial_sort_button_group.addButton(self.sort_last_selected_radio, 1) # ID 1 for last selected
-        if self.initial_folder_sort_setting == SORT_BY_LOAD_ORDER_ALWAYS:
-            self.sort_load_order_radio.setChecked(True)
-        else: # Default to last selected or if the value is SORT_BY_LAST_SELECTED
-            self.sort_last_selected_radio.setChecked(True)
-        initial_sort_layout.addWidget(self.sort_load_order_radio); initial_sort_layout.addWidget(self.sort_last_selected_radio)
-        initial_sort_group.setLayout(initial_sort_layout); main_layout.addWidget(initial_sort_group)
 
         # --- Dialog Buttons (OK, Cancel) ---
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
