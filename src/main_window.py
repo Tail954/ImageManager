@@ -6,8 +6,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTreeView, QSplitter, QFrame, QFileDialog, QSlider, QListView, QDialog,
      QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox, QStyledItemDelegate
-)
-from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent
+) # yapf: disable
+from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent, QResizeEvent
 from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray # <--- ★QWIDGETSIZE_MAX のインポートを削除
 import os # For path operations
 from pathlib import Path # For path operations
@@ -37,19 +37,19 @@ from .full_image_dialog import FullImageDialog
 from .settings_dialog import SettingsDialog
 from .drop_window import DropWindow
 from .wc_creator_dialog import WCCreatorDialog
-from .metadata_utils import extract_image_metadata # Import shared metadata extraction
-from .dialog_manager import DialogManager # Import DialogManager
-from .file_operation_manager import FileOperationManager # New import
-from .ui_manager import UIManager # ★★★ UIManagerをインポート ★★★
+from .metadata_utils import extract_image_metadata
+from .dialog_manager import DialogManager
+from .file_operation_manager import FileOperationManager
+from .ui_manager import UIManager
 
 from .constants import (
     APP_SETTINGS_FILE,
     METADATA_ROLE, SELECTION_ORDER_ROLE, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM,
     THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, 
     DELETE_EMPTY_FOLDERS_ENABLED,
-    INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # ★★★ 初期ソート設定 ★★★
+    INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # 初期ソート設定
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
-    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ★★★ ジオメトリ定数をインポート ★★★
+    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ジオメトリ定数をインポート
 )
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         # self.metadata_dialog_instance = None # DialogManagerが管理
         self.drop_window_instance = None # <--- ★追加: DropWindowのインスタンスを保持
         self.dialog_manager = DialogManager(self) # DialogManagerのインスタンス化
-        self.ui_manager = UIManager(self) # ★★★ UIManagerのインスタンス化 ★★★
+        self.ui_manager = UIManager(self) # UIManagerのインスタンス化
 
         self.setWindowTitle("ImageManager")
         self.setGeometry(100, 100, 1200, 800)
@@ -90,7 +90,7 @@ class MainWindow(QMainWindow):
             1: {"name": "ファイル名 降順", "key_type": 0, "order": Qt.SortOrder.DescendingOrder, "caption": "ファイル名 降順"},
             2: {"name": "更新日時 昇順", "key_type": 1, "order": Qt.SortOrder.AscendingOrder, "caption": "更新日時 昇順"},
             3: {"name": "更新日時 降順", "key_type": 1, "order": Qt.SortOrder.DescendingOrder, "caption": "更新日時 降順"},
-            4: {"name": "読み込み順", "key_type": 2, "order": Qt.SortOrder.AscendingOrder, "caption": "読み込み順"}, # ★★★ 追加 ★★★
+            4: {"name": "読み込み順", "key_type": 2, "order": Qt.SortOrder.AscendingOrder, "caption": "読み込み順"},
         }
         self.current_sort_button_id = 0 # デフォルトは "ファイル名 ↑" (ID: 0)
         self.load_start_time = None # For load time measurement
@@ -229,8 +229,8 @@ class MainWindow(QMainWindow):
         self.app_settings["last_folder_path"] = self.current_folder_path
         self.app_settings["recursive_search"] = self.recursive_search_enabled
         # self.app_settings["sort_criteria_index"] = self.current_sort_criteria_index # 廃止 (コンボボックス用)
-        self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled # ★★★ 追加 ★★★
-        self.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = self.initial_folder_sort_setting # ★★★ 追加 ★★★
+        self.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.delete_empty_folders_enabled
+        self.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = self.initial_folder_sort_setting
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
 
         # ★★★ ウィンドウジオメトリの保存 ★★★
@@ -262,8 +262,8 @@ class MainWindow(QMainWindow):
                 THUMBNAIL_RIGHT_CLICK_ACTION: self.thumbnail_right_click_action,
                 WC_COMMENT_OUTPUT_FORMAT: self.wc_creator_comment_format,
                 "last_folder_path": self.current_folder_path,
-                DELETE_EMPTY_FOLDERS_ENABLED: self.delete_empty_folders_enabled, # ★★★ 追加 ★★★
-                INITIAL_SORT_ORDER_ON_FOLDER_SELECT: self.initial_folder_sort_setting, # ★★★ 追加 ★★★
+                DELETE_EMPTY_FOLDERS_ENABLED: self.delete_empty_folders_enabled,
+                INITIAL_SORT_ORDER_ON_FOLDER_SELECT: self.initial_folder_sort_setting,
                 "recursive_search": self.recursive_search_enabled,
                 # "sort_criteria_index": self.current_sort_criteria_index, # 廃止
                 "sort_button_id": self.current_sort_button_id, # 新しいトグルボタンUI用
@@ -725,55 +725,6 @@ class MainWindow(QMainWindow):
     # --- ★★★ START: DropWindow連携メソッド ★★★ ---
     # --- ★★★ END: DropWindow連携メソッド ★★★ ---
 
-    def _open_wc_creator_dialog(self):
-        logger.info("ワイルドカード作成ツールを起動します。")
-
-        selected_proxy_indexes = self.ui_manager.thumbnail_view.selectionModel().selectedIndexes() # ★★★ UIManager経由 ★★★
-        if not selected_proxy_indexes:
-            QMessageBox.information(self, "情報", "作成対象の画像をサムネイル一覧から選択してください。")
-            return
-
-        selected_files_for_wc = []
-        metadata_for_wc = []
-
-        processed_paths = set() # 選択されたアイテムの重複処理を避ける
-        
-        for proxy_idx in selected_proxy_indexes:
-            if proxy_idx.column() == 0:
-                source_idx = self.ui_manager.filter_proxy_model.mapToSource(proxy_idx) # ★★★ UIManager経由 ★★★
-                item = self.ui_manager.source_thumbnail_model.itemFromIndex(source_idx) # ★★★ UIManager経由 ★★★
-                if item:
-                    file_path = item.data(Qt.ItemDataRole.UserRole)
-                    if file_path and file_path not in processed_paths:
-                        metadata = item.data(METADATA_ROLE)
-                        if not isinstance(metadata, dict):
-                            metadata = self.metadata_cache.get(file_path)
-                        if not isinstance(metadata, dict): # キャッシュにもなければ再抽出
-                            logger.warning(f"WC Creator用メタデータ: {file_path} のキャッシュが見つからないため、再抽出します。")
-                            metadata = extract_image_metadata(file_path)
-                            self.metadata_cache[file_path] = metadata
-                        
-                        if isinstance(metadata, dict):
-                            selected_files_for_wc.append(file_path)
-                            metadata_for_wc.append(metadata)
-                            processed_paths.add(file_path)
-                        else:
-                            logger.error(f"WC Creator: {file_path} のメタデータ取得に失敗しました。スキップします。")
-
-        if not selected_files_for_wc:
-            QMessageBox.warning(self, "エラー", "有効な画像データが見つかりませんでした。")
-            return
-
-        logger.info(f"{len(selected_files_for_wc)} 個の画像をWC Creatorに渡します。")
-        wc_dialog = WCCreatorDialog(
-            selected_file_paths=selected_files_for_wc,
-            metadata_list=metadata_for_wc,
-            output_format=self.wc_creator_comment_format,
-            parent=self
-        )
-        wc_dialog.exec()
-        logger.info("プロンプト整形ツールを閉じました。")
-
     # --- File Operation Completion Logic (called by FileOperationManager) ---
     def _process_file_op_completion(self, result):
         # logger.info(f"_process_file_op_completion: START - Result: {result}") # 削除
@@ -1036,7 +987,7 @@ class MainWindow(QMainWindow):
         logger.info("アプリケーションを終了します。")
         super().closeEvent(event)
 
-    def resizeEvent(self, event: QCloseEvent): # QResizeEvent の方が適切ですが、既存の型ヒントを維持します
+    def resizeEvent(self, event: QResizeEvent): # ★ 型ヒントを QResizeEvent に変更
         """ウィンドウリサイズ時に左パネルのオーバーレイウィジェットのサイズを調整し、
         左パネルの最大幅を固定値に設定する。
         """
