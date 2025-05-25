@@ -20,7 +20,14 @@ class FileOperationManager:
             logger.info("移動するファイルが選択されていません。")
             self.main_window.statusBar.showMessage("移動するファイルを選択してください。", 3000)
             return
-        destination_folder = QFileDialog.getExistingDirectory(self.main_window, "移動先フォルダを選択", self.main_window.current_folder_path or "")
+        
+        # ★★★ 移動先フォルダの初期値を設定 ★★★
+        initial_move_dir = ""
+        if self.main_window.last_move_destination_folder and os.path.isdir(self.main_window.last_move_destination_folder):
+            initial_move_dir = self.main_window.last_move_destination_folder
+        elif self.main_window.current_folder_path and os.path.isdir(self.main_window.current_folder_path):
+            initial_move_dir = self.main_window.current_folder_path
+        destination_folder = QFileDialog.getExistingDirectory(self.main_window, "移動先フォルダを選択", initial_move_dir)
         if destination_folder:
             logger.info(f"移動先フォルダが選択されました: {destination_folder}")
             logger.info(f"移動対象ファイル: {self.main_window.selected_file_paths}")
@@ -47,7 +54,14 @@ class FileOperationManager:
             logger.info("コピーするファイルが選択されていません (選択順)。")
             self.main_window.statusBar.showMessage("コピーするファイルを順番に選択してください。", 3000)
             return
-        destination_folder = QFileDialog.getExistingDirectory(self.main_window, "コピー先フォルダを選択", self.main_window.current_folder_path or "")
+
+        # ★★★ コピー先フォルダの初期値を設定 ★★★
+        initial_copy_dir = ""
+        if self.main_window.last_copy_destination_folder and os.path.isdir(self.main_window.last_copy_destination_folder):
+            initial_copy_dir = self.main_window.last_copy_destination_folder
+        elif self.main_window.current_folder_path and os.path.isdir(self.main_window.current_folder_path):
+            initial_copy_dir = self.main_window.current_folder_path
+        destination_folder = QFileDialog.getExistingDirectory(self.main_window, "コピー先フォルダを選択", initial_copy_dir)
         if destination_folder:
             if self.main_window.file_operations.start_operation("copy", None, destination_folder, copy_selection_order=self.main_window.copy_selection_order):
                 self.main_window.ui_manager.set_file_op_buttons_enabled_ui(False) # ★★★ UIManager経由 ★★★
