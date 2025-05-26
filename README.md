@@ -73,7 +73,7 @@ Python 3.10.6で動作確認
 ![Image](https://github.com/user-attachments/assets/0afdc320-1038-4747-8356-d69b779211ba)
 - **メタデータのPositive、Negative、Infoでフィルタリング**
   - テキストボックスに `,（カンマ）` 区切りで複数ワード入力可
-  - 空白で `Filter` を押すとフィルタ解除
+  - 空白で `フィルタ適用` を押すとフィルタ解除
   - ラジオボタンで `AND検索`（すべてを含む）/ `OR検索`（いずれかを含む）を切り替え
   - 項目間はand固定（positive1 or positive2）and （negative1 or negative2）
 
