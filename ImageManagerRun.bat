@@ -11,7 +11,7 @@ IF NOT EXIST %VENV_PATH% (
 REM 仮想環境をアクティブ化
 CALL %VENV_PATH%\Scripts\activate
 
-REM requirements.txtパッケージをインストール
+REM requirements.txtがあればパッケージをインストール
 IF EXIST requirements.txt (
     echo パッケージをインストールしています...
     pip install -r requirements.txt
