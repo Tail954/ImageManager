@@ -11,14 +11,14 @@ IF NOT EXIST %VENV_PATH% (
 REM 仮想環境をアクティブ化
 CALL %VENV_PATH%\Scripts\activate
 
-REM requirements.txtが存在する場合はパッケージをインストール
+REM requirements.txtがあればパッケージをインストール
 IF EXIST requirements.txt (
     echo パッケージをインストールしています...
     pip install -r requirements.txt
 )
 
-REM ImageManager.pyを実行
-echo ImageManager.pyを実行しています...
+REM ImageMover.pyを実行
+echo ImageMover.pyを実行しています...
 python main.py
 
 REM 仮想環境を非アクティブ化
