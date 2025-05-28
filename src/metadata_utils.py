@@ -107,13 +107,7 @@ def extract_image_metadata(image_path):
     Extracts positive_prompt, negative_prompt, and generation_info from an image,
     returning them as a dictionary.
     """
-    target_file_for_debug_raw = r"G:\test\00005-4187066497.jpg"
-    normalized_target_path = target_file_for_debug_raw.replace("\\", "/")
-    normalized_image_path = image_path.replace("\\", "/")
-    is_target_file = (normalized_image_path == normalized_target_path)
-    
-    # if is_target_file:
-        # logger.info(f"DEBUG_TARGET_FILE: Processing {image_path} (Normalized: {normalized_image_path})")
+    # is_target_file はデバッグ用だったので削除。必要であればローカルで復活させてください。
 
     extracted_params = {
         'positive_prompt': '',
@@ -121,56 +115,89 @@ def extract_image_metadata(image_path):
         'generation_info': ''
     }
     raw_text_to_parse = None
+    is_comfyui_json_loaded = False # Flag to indicate if ComfyUI JSON was loaded
 
     try:
         with Image.open(image_path) as img:
-            if 'parameters' in img.info and isinstance(img.info['parameters'], str):
-                raw_text_to_parse = img.info['parameters']
-                logger.debug(f"Found 'parameters' in info for {image_path}")
+            # 1. Try to get ComfyUI workflow or prompt JSON
+            comfy_workflow_data = img.info.get('workflow')
+            if comfy_workflow_data and isinstance(comfy_workflow_data, str):
+                try:
+                    # Validate if it's actually JSON, though we store it as string
+                    json.loads(comfy_workflow_data)
+                    extracted_params['generation_info'] = comfy_workflow_data
+                    extracted_params['positive_prompt'] = "" # ComfyUI JSONの場合、これらは空
+                    extracted_params['negative_prompt'] = ""
+                    is_comfyui_json_loaded = True
+                    logger.debug(f"Loaded ComfyUI 'workflow' JSON for {image_path}")
+                except json.JSONDecodeError:
+                    logger.warning(f"ComfyUI 'workflow' data for {image_path} is not valid JSON. Will try other methods.")
             
-            if raw_text_to_parse is None and 'exif' in img.info:
-                decoded_exif_info = _im_decode_exif(img.info['exif'])
-                if isinstance(decoded_exif_info, str) and ("Steps:" in decoded_exif_info or "Negative prompt:" in decoded_exif_info or "Seed:" in decoded_exif_info):
-                    raw_text_to_parse = decoded_exif_info
-                    logger.debug(f"Used decoded 'exif' from img.info for {image_path}")
-
-            if raw_text_to_parse is None and (img.format == "JPEG" or img.format == "WEBP"):
-                exif_data_obj = img.getexif() 
-                if exif_data_obj:
-                    user_comment = exif_data_obj.get(0x9286) 
-                    if user_comment:
-                        decoded_comment = _im_decode_exif(user_comment)
-                        if isinstance(decoded_comment, str) and decoded_comment.strip():
-                            raw_text_to_parse = decoded_comment
-                            logger.debug(f"Found UserComment (0x9286) in EXIF for {image_path}")
-                    
-                    if raw_text_to_parse is None:
-                        image_desc = exif_data_obj.get(0x010e) 
-                        if image_desc:
-                            decoded_desc = _im_decode_exif(image_desc)
-                            if isinstance(decoded_desc, str) and decoded_desc.strip():
-                                raw_text_to_parse = decoded_desc
-                                logger.debug(f"Found ImageDescription (0x010e) in EXIF for {image_path}")
-            
-            if raw_text_to_parse is None and 'Comment' in img.info:
-                comment_content = img.info['Comment']
-                if isinstance(comment_content, str):
+            if not is_comfyui_json_loaded:
+                comfy_prompt_data = img.info.get('prompt')
+                if comfy_prompt_data and isinstance(comfy_prompt_data, str):
                     try:
-                        comment_json = json.loads(comment_content)
-                        if isinstance(comment_json, dict):
-                            if 'prompt' in comment_json and isinstance(comment_json['prompt'], str):
-                                raw_text_to_parse = comment_json['prompt']
-                                logger.debug(f"Used 'prompt' from JSON in Comment for {image_path}")
+                        json.loads(comfy_prompt_data)
+                        extracted_params['generation_info'] = comfy_prompt_data
+                        extracted_params['positive_prompt'] = "" # ComfyUI JSONの場合、これらは空
+                        extracted_params['negative_prompt'] = ""
+                        is_comfyui_json_loaded = True
+                        logger.debug(f"Loaded ComfyUI 'prompt' JSON for {image_path}")
                     except json.JSONDecodeError:
-                        if ("Steps:" in comment_content or "Negative prompt:" in comment_content or "Seed:" in comment_content):
-                             raw_text_to_parse = comment_content
-                             logger.debug(f"Used raw string from Comment for {image_path}")
+                        logger.warning(f"ComfyUI 'prompt' data for {image_path} is not valid JSON. Will try other methods.")
 
-            if raw_text_to_parse:
-                extracted_params = _im_parse_parameters(raw_text_to_parse, image_path, is_target_file)
-            else:
-                logger.debug(f"No suitable metadata text found to parse in {image_path}")
+            # 2. If no ComfyUI JSON, fall back to WebUI-style metadata
+            if not is_comfyui_json_loaded:
+                if 'parameters' in img.info and isinstance(img.info['parameters'], str):
+                    raw_text_to_parse = img.info['parameters']
+                    logger.debug(f"Found 'parameters' in info for {image_path}")
+                
+                if raw_text_to_parse is None and 'exif' in img.info:
+                    decoded_exif_info = _im_decode_exif(img.info['exif'])
+                    if isinstance(decoded_exif_info, str) and ("Steps:" in decoded_exif_info or "Negative prompt:" in decoded_exif_info or "Seed:" in decoded_exif_info):
+                        raw_text_to_parse = decoded_exif_info
+                        logger.debug(f"Used decoded 'exif' from img.info for {image_path}")
 
+                if raw_text_to_parse is None and (img.format == "JPEG" or img.format == "WEBP"):
+                    exif_data_obj = img.getexif()
+                    if exif_data_obj:
+                        user_comment = exif_data_obj.get(0x9286)
+                        if user_comment:
+                            decoded_comment = _im_decode_exif(user_comment)
+                            if isinstance(decoded_comment, str) and decoded_comment.strip():
+                                raw_text_to_parse = decoded_comment
+                                logger.debug(f"Found UserComment (0x9286) in EXIF for {image_path}")
+                        
+                        if raw_text_to_parse is None:
+                            image_desc = exif_data_obj.get(0x010e)
+                            if image_desc:
+                                decoded_desc = _im_decode_exif(image_desc)
+                                if isinstance(decoded_desc, str) and decoded_desc.strip():
+                                    raw_text_to_parse = decoded_desc
+                                    logger.debug(f"Found ImageDescription (0x010e) in EXIF for {image_path}")
+                
+                if raw_text_to_parse is None and 'Comment' in img.info:
+                    comment_content = img.info['Comment']
+                    if isinstance(comment_content, str):
+                        try:
+                            comment_json = json.loads(comment_content)
+                            if isinstance(comment_json, dict):
+                                if 'prompt' in comment_json and isinstance(comment_json['prompt'], str):
+                                    raw_text_to_parse = comment_json['prompt']
+                                    logger.debug(f"Used 'prompt' from JSON in Comment for {image_path}")
+                        except json.JSONDecodeError:
+                            # If not JSON, treat as raw text if it looks like generation parameters
+                            if ("Steps:" in comment_content or "Negative prompt:" in comment_content or "Seed:" in comment_content):
+                                 raw_text_to_parse = comment_content
+                                 logger.debug(f"Used raw string from Comment for {image_path}")
+
+                if raw_text_to_parse:
+                    # Only parse if not ComfyUI JSON and raw_text_to_parse was found
+                    extracted_params = _im_parse_parameters(raw_text_to_parse, image_path) # Removed is_target_file
+                else:
+                    logger.debug(f"No suitable WebUI-style metadata text found to parse in {image_path}")
+            # else: ComfyUI JSON was loaded, extracted_params already set for generation_info
+                    
     except FileNotFoundError:
         logger.error(f"Metadata extraction: File not found {image_path}")
     except Exception as e:
