@@ -405,4 +405,7 @@ class UIManager:
         
         # main_window._update_status_bar_info() は handle_thumbnail_selection_changed の中で呼ばれるので、
         # ここでは直接呼び出さない。
-        logger.debug(f"UIManager.apply_filters_preserving_selection finished. Selection restoration command issued for {len(new_selection_to_apply_on_view.indexes())} items in view.")
+        # logger.debug(f"UIManager.apply_filters_preserving_selection finished. Selection restoration command issued for {len(new_selection_to_apply_on_view.indexes())} items in view.")
+        # ★★★ フィルタ適用後、選択状態の有無に関わらずステータスバーを更新 ★★★
+        self.mw._update_status_bar_info()
+        logger.debug(f"UIManager.apply_filters_preserving_selection finished. Status bar updated. Selection restoration command issued for {len(new_selection_to_apply_on_view.indexes())} items in view.")
