@@ -599,6 +599,9 @@ class MainWindow(QMainWindow):
     def on_thumbnail_loading_finished(self):
         logger.info("サムネイルの非同期読み込みが完了しました。")
 
+        self.is_loading_thumbnails = False 
+        self.ui_manager.set_thumbnail_loading_ui_state(False)
+
         if self.ui_manager.filter_proxy_model: # ★★★ UIManager経由でアクセス ★★★
             # フィルタを先に適用
             self.apply_filters(preserve_selection=True)
@@ -609,9 +612,9 @@ class MainWindow(QMainWindow):
             # _apply_sort_from_toggle_button は is_loading_thumbnails をチェックするので、
             # フラグを先に倒してから呼び出す。
 
-        # is_loading_thumbnails フラグとUIロックを解除
-        self.is_loading_thumbnails = False 
-        self.ui_manager.set_thumbnail_loading_ui_state(False) # ★★★ UI状態変更をUIManagerに委譲 ★★★
+        # ★★★ 修正点: フラグ設定とUIロック解除は上部に移動したため、ここでは不要 ★★★
+        # self.is_loading_thumbnails = False 
+        # self.ui_manager.set_thumbnail_loading_ui_state(False) # ★★★ UI状態変更をUIManagerに委譲 ★★★
 
         # ソートを実行 (is_loading_thumbnails が False になった後)
         if self.ui_manager.filter_proxy_model:
@@ -631,7 +634,8 @@ class MainWindow(QMainWindow):
                 logger.info(f"サムネイル読み込み完了。現在のソート設定 (ボタンID: {self.current_sort_button_id}) をモデルに適用します。")
                 self._apply_sort_from_toggle_button(self.current_sort_button_id)
 
-        self._update_status_bar_info()
+        # self._update_status_bar_info() # apply_filters や _apply_sort_from_toggle_button の中で更新されるため、ここでは不要
+        # ただし、上記のいずれも実行されないパスがある場合は必要になるが、現状はカバーされているはず。
         self.statusBar.showMessage("サムネイル読み込み完了", 5000)
 
         if self.thumbnail_loader_thread:
@@ -706,14 +710,15 @@ class MainWindow(QMainWindow):
         if self.ui_manager.thumbnail_view.model() and self.ui_manager.thumbnail_view.model().rowCount() > 0: # ★★★ UIManager経由 ★★★
             self.ui_manager.thumbnail_view.selectAll() # ★★★ UIManager経由 ★★★
             logger.info("すべての表示中サムネイルを選択しました。")
+            # selectionChangedシグナル経由でhandle_thumbnail_selection_changedが呼ばれ、そこでステータスバーが更新される
         else:
             logger.info("選択対象のサムネイルがありません。")
-        self._update_status_bar_info()
+        # self._update_status_bar_info() # handle_thumbnail_selection_changed で更新
 
     def deselect_all_thumbnails(self):
         self.ui_manager.thumbnail_view.clearSelection() # ★★★ UIManager経由 ★★★
         logger.info("すべてのサムネイルの選択を解除しました。")
-        self._update_status_bar_info()
+        # self._update_status_bar_info() # handle_thumbnail_selection_changed で更新
 
     def apply_filters(self, preserve_selection=False):
         if self.is_loading_thumbnails:
@@ -845,8 +850,8 @@ class MainWindow(QMainWindow):
                  # logger.info(f"_process_file_op_completion: Calling apply_filters...") # 削除
                  # apply_filters の前に True に戻すか、後にするかは挙動を見て調整
                  self.apply_filters(preserve_selection=True) # preserve_selection=True で現在の選択を維持しようと試みる (実際にはクリアされるが)
-                 # logger.info(f"_process_file_op_completion: apply_filters finished in ... seconds.") # 削除
-                 self._update_status_bar_info() # _update_status_bar_info() は handle_thumbnail_selection_changed 内でも呼ばれるが、ここでも呼ぶ
+                 # logger.info(f"_process_file_op_completion: apply_filters finished in ... seconds.") # 削除 # apply_filters の中で更新されるため、ここでは不要
+                 # self._update_status_bar_info() # apply_filters の中で更新されるため、ここでは不要
             if renamed_files:
                 dialog = RenamedFilesDialog(renamed_files, self)
                 dialog.exec()
