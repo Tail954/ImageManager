@@ -69,8 +69,7 @@ Python 3.10.6で動作確認 \
   - アニメーションwebpは **V** アイコンが表示され、ダブルクリックで再生
 - **右クリック** でメタデータ表示/フォルダを開く [サムネイル右クリック時の動作](#設定)
    - テキスト選択タブ（右：ComfyUI生成）  
-   ![Image](https://github.com/user-attachments/assets/2770dad0-358f-4219-a435-c1b770ea3b01)
-   ![Image](https://github.com/user-attachments/assets/993e71bd-46bb-4268-888d-93d68b9a42f4)
+   ![Image](https://github.com/user-attachments/assets/2770dad0-358f-4219-a435-c1b770ea3b01)   ![Image](https://github.com/user-attachments/assets/993e71bd-46bb-4268-888d-93d68b9a42f4)
    - タグ選択  
      クリックでタグを選択して、`クリップボードにコピー` 可能  
    ![Image](https://github.com/user-attachments/assets/59931247-7963-4e11-9cf3-75faf202f3fb)  
