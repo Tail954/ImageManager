@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
      QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox, QStyledItemDelegate
 ) # yapf: disable
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent, QResizeEvent
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray # <--- ★QWIDGETSIZE_MAX のインポートを削除
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray, QItemSelectionModel # <--- ★QWIDGETSIZE_MAX のインポートを削除
 import os # For path operations
 from pathlib import Path # For path operations
 import json # For settings / metadata parsing
@@ -50,7 +50,8 @@ from .constants import (
     LAST_MOVE_DESTINATION_FOLDER, LAST_COPY_DESTINATION_FOLDER, # ファイル操作の最終宛先フォルダ
     INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # 初期ソート設定
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
-    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ジオメトリ定数をインポート
+    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY, # ジオメトリ定数をインポート
+    DOUBLE_CLICK_ACTION, DOUBLE_CLICK_ACTION_VIEWER, DOUBLE_CLICK_ACTION_VIEWER_METADATA # ★★★ 追加 ★★★
 )
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,9 @@ class MainWindow(QMainWindow):
         # Load application-wide settings first
         self._load_app_settings()
 
-        # --- ★★★ UIセットアップをUIManagerに委譲 ★★★ ---
+        self.double_click_action = DOUBLE_CLICK_ACTION_VIEWER # ★★★ 追加: ダブルクリック動作 ★★★
+
+    # --- ★★★ UIセットアップをUIManagerに委譲 ★★★ ---
         self.ui_manager.setup_ui()
 
         # 設定からウィンドウジオメトリを復元 (UIセットアップ後、show()の前が望ましい)
@@ -196,6 +199,48 @@ class MainWindow(QMainWindow):
             self.ui_manager.set_sort_buttons_enabled(True) # ソートボタン群を再度有効化
         self._update_status_bar_info()
 
+    # ★★★ 追加: 画像ビューワーからの選択切り替えサポート ★★★
+    def is_image_selected(self, image_path):
+        """指定されたパスの画像が現在選択されているかを返す"""
+        return image_path in self.selected_file_paths
+
+    def handle_toggle_view_selection(self, image_path):
+        """画像ビューワーからのリクエストに応じて、指定された画像の選択状態をトグルする"""
+        logger.debug(f"handle_toggle_view_selection called for: {image_path}")
+        
+        # Find the source index for the image_path
+        source_index = None
+        for row in range(self.ui_manager.source_thumbnail_model.rowCount()):
+             item = self.ui_manager.source_thumbnail_model.item(row)
+             if item and item.data(Qt.ItemDataRole.UserRole) == image_path:
+                 source_index = self.ui_manager.source_thumbnail_model.indexFromItem(item)
+                 break
+        
+        if not source_index:
+            logger.warning(f"handle_toggle_view_selection: Could not find item for {image_path}")
+            return
+
+        # Map to proxy index
+        proxy_index = self.ui_manager.filter_proxy_model.mapFromSource(source_index)
+        if not proxy_index.isValid():
+             logger.warning(f"handle_toggle_view_selection: Proxy index invalid for {image_path} (possibly filtered out)")
+             return
+
+        # Toggle selection
+        selection_model = self.ui_manager.thumbnail_view.selectionModel()
+        selection_model.select(proxy_index, QItemSelectionModel.SelectionFlag.Toggle)
+        
+        # Selection change will trigger handle_thumbnail_selection_changed via signal, 
+        # which updates self.selected_file_paths.
+        
+        # Explicitly update the dialogs' button state to match the new selection
+        # (Although the dialogs called this, we confirm the state change back to them)
+        if self.dialog_manager.full_image_dialog_instance and self.dialog_manager.full_image_dialog_instance.isVisible():
+             self.dialog_manager.full_image_dialog_instance.update_selection_state(image_path)
+             
+        if self.dialog_manager.image_with_metadata_dialog_instance and self.dialog_manager.image_with_metadata_dialog_instance.isVisible():
+             self.dialog_manager.image_with_metadata_dialog_instance.update_selection_state(image_path)
+
     def _create_menu_bar(self):
         """ メニューバーを作成し、アクションを直接配置 """
         menu_bar = self.menuBar()
@@ -237,6 +282,7 @@ class MainWindow(QMainWindow):
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
         self.app_settings[LAST_MOVE_DESTINATION_FOLDER] = self.last_move_destination_folder
         self.app_settings[LAST_COPY_DESTINATION_FOLDER] = self.last_copy_destination_folder
+        self.app_settings[DOUBLE_CLICK_ACTION] = self.double_click_action # ★★★ 追加 ★★★
 
         # ★★★ ウィンドウジオメトリの保存 ★★★
         self.app_settings[MAIN_WINDOW_GEOMETRY] = self.saveGeometry().toBase64().data().decode('utf-8')
@@ -346,6 +392,10 @@ class MainWindow(QMainWindow):
         # ★★★ 追加: フォルダ選択時の初期ソート設定 ★★★
         self.initial_folder_sort_setting = self.app_settings.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS) # ★★★ デフォルトを「常に読み込み順」に変更 ★★★
         logger.info(f"フォルダ選択時の初期ソート設定を読み込みました: {self.initial_folder_sort_setting}")
+
+        # ★★★ 追加: ダブルクリック動作設定 ★★★
+        self.double_click_action = self.app_settings.get(DOUBLE_CLICK_ACTION, DOUBLE_CLICK_ACTION_VIEWER)
+        logger.info(f"ダブルクリック動作設定を読み込みました: {self.double_click_action}")
 
         # ★★★ ウィンドウジオメトリの読み込み (適用は __init__ の最後で行う) ★★★
         if main_geom_str := self.app_settings.get(MAIN_WINDOW_GEOMETRY):

@@ -14,7 +14,10 @@ from src.constants import (
     DELETE_EMPTY_FOLDERS_ENABLED, 
     INITIAL_SORT_ORDER_ON_FOLDER_SELECT, # 初期ソート設定キー
     SORT_BY_LOAD_ORDER_ALWAYS,           # 常に読み込み順
-    SORT_BY_LAST_SELECTED                # 前回選択されたソート順
+    SORT_BY_LAST_SELECTED,                # 前回選択されたソート順
+    DOUBLE_CLICK_ACTION,
+    DOUBLE_CLICK_ACTION_VIEWER,
+    DOUBLE_CLICK_ACTION_VIEWER_METADATA
 ) 
 import json
 import os
@@ -65,6 +68,7 @@ class SettingsDialog(QDialog):
                  current_wc_comment_format,
                  current_initial_folder_sort_setting, # 初期ソート設定
                  current_delete_empty_folders_setting,
+                 current_double_click_action, # ★★★ 追加: ダブルクリック動作設定 ★★★
                  parent=None):
         super().__init__(parent)
         self.setWindowTitle("設定")
@@ -77,6 +81,7 @@ class SettingsDialog(QDialog):
         self.initial_wc_comment_format = current_wc_comment_format # 初期値を保持
         self.initial_folder_sort_setting = current_initial_folder_sort_setting
         self.initial_delete_empty_folders_setting = current_delete_empty_folders_setting
+        self.initial_double_click_action = current_double_click_action # ★★★ 追加 ★★★
 
         # アプリケーション設定ファイルからダイアログに関連する値を読み込む
         # MainWindowと責任範囲を分けるため、このダイアログは自身の表示に必要な設定のみを
@@ -141,6 +146,25 @@ class SettingsDialog(QDialog):
         main_layout.addWidget(preview_mode_group)
         if self.initial_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM: self.original_zoom_mode_radio.setChecked(True)
         else: self.fit_mode_radio.setChecked(True)
+
+        # --- Double Click Action Group ---
+        double_click_group = QGroupBox("サムネイルダブルクリック時の動作")
+        double_click_layout = QVBoxLayout()
+        self.viewer_only_radio = QRadioButton("画像ビューアのみ表示 (従来)")
+        self.viewer_metadata_radio = QRadioButton("画像ビューアとメタデータを並べて表示")
+        self.double_click_group_button_group = QButtonGroup(self) # 名前重複回避のため変更
+        self.double_click_group_button_group.addButton(self.viewer_only_radio)
+        self.double_click_group_button_group.addButton(self.viewer_metadata_radio)
+        
+        if self.initial_double_click_action == DOUBLE_CLICK_ACTION_VIEWER_METADATA:
+            self.viewer_metadata_radio.setChecked(True)
+        else:
+            self.viewer_only_radio.setChecked(True)
+            
+        double_click_layout.addWidget(self.viewer_only_radio)
+        double_click_layout.addWidget(self.viewer_metadata_radio)
+        double_click_group.setLayout(double_click_layout)
+        main_layout.addWidget(double_click_group)
 
         # --- Thumbnail Right-Click Action Group ---
         right_click_action_group = QGroupBox("サムネイル右クリック時の動作")
@@ -251,6 +275,11 @@ class SettingsDialog(QDialog):
         if self.sort_load_order_radio.isChecked():
             return SORT_BY_LOAD_ORDER_ALWAYS
         return SORT_BY_LAST_SELECTED # Default or if sort_last_selected_radio is checked
+
+    def get_selected_double_click_action(self):
+        if self.viewer_metadata_radio.isChecked():
+            return DOUBLE_CLICK_ACTION_VIEWER_METADATA
+        return DOUBLE_CLICK_ACTION_VIEWER
 
 
 if __name__ == '__main__':

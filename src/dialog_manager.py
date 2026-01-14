@@ -7,11 +7,13 @@ from PyQt6.QtWidgets import QMessageBox, QApplication, QDialog
 from .settings_dialog import SettingsDialog
 from .full_image_dialog import FullImageDialog
 from .image_metadata_dialog import ImageMetadataDialog
+from .image_with_metadata_dialog import ImageWithMetadataDialog # ★★★ 追加 ★★★
 from .wc_creator_dialog import WCCreatorDialog
 from .drop_window import DropWindow
 from .constants import (
     APP_SETTINGS_FILE,
     THUMBNAIL_RIGHT_CLICK_ACTION,
+    DOUBLE_CLICK_ACTION, DOUBLE_CLICK_ACTION_VIEWER, DOUBLE_CLICK_ACTION_VIEWER_METADATA, # ★★★ 追加 ★★★
     WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, DELETE_EMPTY_FOLDERS_ENABLED,
     INITIAL_SORT_ORDER_ON_FOLDER_SELECT, # ★★★ 初期ソート設定キーを追加 ★★★
     Qt as ConstantsQt # Renamed Qt from constants to avoid clash
@@ -28,6 +30,7 @@ class DialogManager:
         self.full_image_dialog_instance = None
         self.metadata_dialog_instance = None
         self.drop_window_instance = None
+        self.image_with_metadata_dialog_instance = None # ★★★ 追加 ★★★
         self.wc_creator_dialog_instance = None # モーダルなので毎回生成・破棄
 
     def open_settings_dialog(self):
@@ -41,6 +44,7 @@ class DialogManager:
                 current_wc_comment_format=self.main_window.wc_creator_comment_format,
                 current_delete_empty_folders_setting=self.main_window.delete_empty_folders_enabled, # ★★★ 追加 ★★★
                 current_initial_folder_sort_setting=self.main_window.initial_folder_sort_setting, # ★★★ 追加: 初期ソート設定を渡す ★★★
+                current_double_click_action=self.main_window.double_click_action, # ★★★ 追加 ★★★
                 parent=self.main_window
             )
 
@@ -70,6 +74,12 @@ class DialogManager:
             if self.main_window.initial_folder_sort_setting != new_initial_folder_sort:
                 self.main_window.initial_folder_sort_setting = new_initial_folder_sort
                 logger.info(f"フォルダ選択時の初期ソート設定が変更されました: {self.main_window.initial_folder_sort_setting}")
+
+            # ★★★ 追加: ダブルクリック動作設定の処理 ★★★
+            new_double_click_action = self.settings_dialog_instance.get_selected_double_click_action()
+            if self.main_window.double_click_action != new_double_click_action:
+                self.main_window.double_click_action = new_double_click_action
+                logger.info(f"ダブルクリック動作設定が変更されました: {self.main_window.double_click_action}")
 
             new_size = self.settings_dialog_instance.get_selected_thumbnail_size()
             reply_ok_for_size_change = True # Assume OK if no confirmation needed or confirmed
@@ -103,6 +113,7 @@ class DialogManager:
             self.main_window.app_settings[WC_COMMENT_OUTPUT_FORMAT] = self.main_window.wc_creator_comment_format
             self.main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
             self.main_window.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = self.main_window.initial_folder_sort_setting # ★★★ 追加 ★★★
+            self.main_window.app_settings[DOUBLE_CLICK_ACTION] = self.main_window.double_click_action # ★★★ 追加 ★★★
             self.main_window._write_app_settings_file()
         self.settings_dialog_instance = None
 
@@ -134,18 +145,36 @@ class DialogManager:
              return
 
         try:
-            if self.full_image_dialog_instance is None:
-                logger.debug(f"FullImageDialogの新規インスタンスを作成します。モード: {self.main_window.image_preview_mode}")
-                self.full_image_dialog_instance = FullImageDialog(
-                    visible_image_paths, current_idx_in_visible_list,
-                    preview_mode=self.main_window.image_preview_mode, parent=self.main_window
-                )
-                self.full_image_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-                self.full_image_dialog_instance.finished.connect(self._on_full_image_dialog_finished)
-                self.full_image_dialog_instance.show()
-            else:
-                logger.debug(f"既存のFullImageDialogインスタンスを更新します。モード: {self.main_window.image_preview_mode}")
-                self.full_image_dialog_instance.update_image(visible_image_paths, current_idx_in_visible_list)
+            # ★★★ 追加: 設定に基づいてダイアログを切り替え ★★★
+            if self.main_window.double_click_action == DOUBLE_CLICK_ACTION_VIEWER_METADATA:
+                if self.image_with_metadata_dialog_instance is None:
+                    logger.debug(f"ImageWithMetadataDialogの新規インスタンスを作成します。")
+                    self.image_with_metadata_dialog_instance = ImageWithMetadataDialog(
+                        visible_image_paths, current_idx_in_visible_list, self.main_window,
+                        preview_mode=self.main_window.image_preview_mode, parent=self.main_window
+                    )
+                    self.image_with_metadata_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                    self.image_with_metadata_dialog_instance.finished.connect(self._on_image_with_metadata_dialog_finished)
+                    self.image_with_metadata_dialog_instance.toggle_selection_requested.connect(self.main_window.handle_toggle_view_selection) # Connect signal
+                    self.image_with_metadata_dialog_instance.show()
+                else:
+                    logger.debug(f"既存のImageWithMetadataDialogインスタンスを更新します。")
+                    self.image_with_metadata_dialog_instance.update_image(visible_image_paths, current_idx_in_visible_list)
+            else: # DOUBLE_CLICK_ACTION_VIEWER (Default)
+                if self.full_image_dialog_instance is None:
+                    logger.debug(f"FullImageDialogの新規インスタンスを作成します。モード: {self.main_window.image_preview_mode}")
+                    self.full_image_dialog_instance = FullImageDialog(
+                        visible_image_paths, current_idx_in_visible_list,
+                        preview_mode=self.main_window.image_preview_mode, parent=self.main_window,
+                        is_selected_callback=self.main_window.is_image_selected
+                    )
+                    self.full_image_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                    self.full_image_dialog_instance.finished.connect(self._on_full_image_dialog_finished)
+                    self.full_image_dialog_instance.toggle_selection_requested.connect(self.main_window.handle_toggle_view_selection)
+                    self.full_image_dialog_instance.show()
+                else:
+                    logger.debug(f"既存のFullImageDialogインスタンスを更新します。モード: {self.main_window.image_preview_mode}")
+                    self.full_image_dialog_instance.update_image(visible_image_paths, current_idx_in_visible_list)
         except Exception as e:
             logger.error(f"画像ダイアログの表示・更新中にエラー ({file_path}): {e}", exc_info=True)
             QMessageBox.critical(self.main_window, "画像表示エラー", f"画像ダイアログの表示・更新中にエラーが発生しました:\n{e}")
@@ -160,6 +189,12 @@ class DialogManager:
         if self.full_image_dialog_instance: # インスタンスが存在する場合のみ
             logger.debug("FullImageDialogが閉じられました。インスタンス参照をクリアします。")
             self.full_image_dialog_instance = None
+
+    def _on_image_with_metadata_dialog_finished(self):
+        """ImageWithMetadataDialogが閉じたときの処理。"""
+        if self.image_with_metadata_dialog_instance:
+            logger.debug("ImageWithMetadataDialogが閉じられました。インスタンス参照をクリアします。")
+            self.image_with_metadata_dialog_instance = None
 
 
     def open_metadata_dialog(self, proxy_index):
