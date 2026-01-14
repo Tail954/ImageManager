@@ -155,6 +155,7 @@ class DialogManager:
                     )
                     self.image_with_metadata_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
                     self.image_with_metadata_dialog_instance.finished.connect(self._on_image_with_metadata_dialog_finished)
+                    self.image_with_metadata_dialog_instance.toggle_selection_requested.connect(self.main_window.handle_toggle_view_selection) # Connect signal
                     self.image_with_metadata_dialog_instance.show()
                 else:
                     logger.debug(f"既存のImageWithMetadataDialogインスタンスを更新します。")
@@ -164,10 +165,12 @@ class DialogManager:
                     logger.debug(f"FullImageDialogの新規インスタンスを作成します。モード: {self.main_window.image_preview_mode}")
                     self.full_image_dialog_instance = FullImageDialog(
                         visible_image_paths, current_idx_in_visible_list,
-                        preview_mode=self.main_window.image_preview_mode, parent=self.main_window
+                        preview_mode=self.main_window.image_preview_mode, parent=self.main_window,
+                        is_selected_callback=self.main_window.is_image_selected
                     )
                     self.full_image_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
                     self.full_image_dialog_instance.finished.connect(self._on_full_image_dialog_finished)
+                    self.full_image_dialog_instance.toggle_selection_requested.connect(self.main_window.handle_toggle_view_selection)
                     self.full_image_dialog_instance.show()
                 else:
                     logger.debug(f"既存のFullImageDialogインスタンスを更新します。モード: {self.main_window.image_preview_mode}")

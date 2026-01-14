@@ -1,7 +1,7 @@
 import logging
 import os
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QSplitter
-from PyQt6.QtCore import Qt, QByteArray
+from PyQt6.QtCore import Qt, QByteArray, pyqtSignal
 
 from .image_preview_widget import ImagePreviewWidget
 from .metadata_widget import MetadataWidget
@@ -11,6 +11,11 @@ from .metadata_utils import extract_image_metadata
 logger = logging.getLogger(__name__)
 
 class ImageWithMetadataDialog(QDialog):
+    previous_image_requested = pyqtSignal()
+    next_image_requested = pyqtSignal()
+    toggle_fullscreen_requested = pyqtSignal(bool)
+    toggle_selection_requested = pyqtSignal(str) # New signal
+
     def __init__(self, image_path_list, current_index, main_window, preview_mode=PREVIEW_MODE_FIT, parent=None):
         super().__init__(parent)
         self.all_image_paths = image_path_list if image_path_list is not None else []
@@ -45,6 +50,7 @@ class ImageWithMetadataDialog(QDialog):
         self.preview_widget.previous_image_requested.connect(self.show_previous_image)
         self.preview_widget.next_image_requested.connect(self.show_next_image)
         self.preview_widget.toggle_fullscreen_requested.connect(self.toggle_fullscreen_state)
+        self.preview_widget.toggle_selection_requested.connect(self._on_toggle_selection) # Connect signal
 
         # Initial Load
         self._load_current_state()
@@ -54,7 +60,8 @@ class ImageWithMetadataDialog(QDialog):
         self.preview_widget.update_image(
             self.image_path, 
             self.current_index, 
-            len(self.all_image_paths)
+            len(self.all_image_paths),
+            self._get_current_selection_state()
         )
         self._update_metadata_display()
         self.setFocus()
@@ -153,3 +160,24 @@ class ImageWithMetadataDialog(QDialog):
         if self.preview_widget.movie:
             self.preview_widget.movie.stop()
         super().closeEvent(event)
+
+    def _on_toggle_selection(self):
+        if self.image_path:
+            self.toggle_selection_requested.emit(self.image_path)
+            # Optimistically update or wait for callback logic if needed. 
+            # Ideally MainWindow updates selection model -> triggers update here if connected,
+            # OR we just rely on the button click having emitted the signal.
+            # MainWindow should handle the logic. 
+            # We can re-sync state immediately if we have access to MainWindow logic.
+            self.update_selection_state(self.image_path)
+
+    def _get_current_selection_state(self):
+        if self.image_path and hasattr(self.main_window, 'is_image_selected'):
+            return self.main_window.is_image_selected(self.image_path)
+        return False
+
+    def update_selection_state(self, image_path):
+        """Called externally to update selection state"""
+        if self.image_path == image_path:
+             self.preview_widget.set_selection_state(self._get_current_selection_state())
+

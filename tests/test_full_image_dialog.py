@@ -378,3 +378,19 @@ class TestFullImageDialog:
 
     # Panning test is more complex due to mouse event sequence and scrollbar interaction.
     # It might be better as an integration test or with more focused mocking of scroll area.
+
+    def test_initialization_with_selection_callback(self, qt_app):
+        """Regression test for double-click initialization error and selection callback."""
+        # Test basic initialization with callback and empty list
+        dialog = FullImageDialog([], 0, parent=None, is_selected_callback=lambda x: True)
+        assert dialog.is_selected_callback is not None
+        assert dialog._get_current_selection_state() is False # False because no image_path
+        dialog.close()
+        
+        # Test with dummy path
+        image_paths = ["dummy_path.jpg"]
+        dialog_with_path = FullImageDialog(image_paths, 0, parent=None, is_selected_callback=lambda x: True)
+        assert dialog_with_path.is_selected_callback is not None
+        assert dialog_with_path.image_path == "dummy_path.jpg"
+        assert dialog_with_path._get_current_selection_state() is True
+        dialog_with_path.close()

@@ -1,7 +1,7 @@
 import logging
 import os
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
-from PyQt6.QtCore import Qt, QByteArray
+from PyQt6.QtCore import Qt, QByteArray, pyqtSignal
 
 from .image_preview_widget import ImagePreviewWidget
 from .constants import PREVIEW_MODE_FIT
@@ -9,20 +9,23 @@ from .constants import PREVIEW_MODE_FIT
 logger = logging.getLogger(__name__)
 
 class FullImageDialog(QDialog):
-    def __init__(self, image_path_list, current_index, preview_mode=PREVIEW_MODE_FIT, parent=None):
+    toggle_fullscreen_requested = pyqtSignal(bool)
+    toggle_selection_requested = pyqtSignal(str) # New signal: image_path
+
+    def __init__(self, image_path_list, current_index, preview_mode=PREVIEW_MODE_FIT, parent=None, is_selected_callback=None):
         super().__init__(parent)
         self.all_image_paths = image_path_list if image_path_list is not None else []
         self.current_index = current_index
         self.preview_mode = preview_mode
+        self.is_selected_callback = is_selected_callback
         self.saved_geometry = None 
         self.image_path = None # Will be set in update_image/update_title
 
         self.setMinimumSize(400, 300)
         self.resize(800, 600)
-        
-        # Main layout
+
         main_layout = QVBoxLayout(self)
-        # main_layout.setContentsMargins(0,0,0,0) 
+        main_layout.setContentsMargins(0,0,0,0) 
 
         self.preview_widget = ImagePreviewWidget(self, preview_mode)
         main_layout.addWidget(self.preview_widget)
@@ -33,6 +36,7 @@ class FullImageDialog(QDialog):
         self.preview_widget.previous_image_requested.connect(self.show_previous_image)
         self.preview_widget.next_image_requested.connect(self.show_next_image)
         self.preview_widget.toggle_fullscreen_requested.connect(self.toggle_fullscreen_state)
+        self.preview_widget.toggle_selection_requested.connect(self._on_toggle_selection) # Connect signal
 
         # Initial Load
         self._update_current_image_info() # Sets title and image_path
@@ -88,14 +92,16 @@ class FullImageDialog(QDialog):
             return
         self.current_index -= 1
         self._update_current_image_info()
-        self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths))
+        self._update_current_image_info()
+        self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths), self._get_current_selection_state())
 
     def show_next_image(self):
         if not self.all_image_paths or self.current_index >= len(self.all_image_paths) - 1:
             return
         self.current_index += 1
         self._update_current_image_info()
-        self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths))
+        self._update_current_image_info()
+        self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths), self._get_current_selection_state())
 
     def toggle_fullscreen_state(self):
         if self.windowState() == Qt.WindowState.WindowMaximized:
@@ -132,6 +138,24 @@ class FullImageDialog(QDialog):
         if self.preview_widget.movie:
             self.preview_widget.movie.stop()
         super().closeEvent(event)
+    
+    def _on_toggle_selection(self):
+        if self.image_path:
+            self.toggle_selection_requested.emit(self.image_path)
+
+    def _get_current_selection_state(self):
+        if self.image_path and self.is_selected_callback:
+            return self.is_selected_callback(self.image_path)
+        return False
+
+    def update_selection_state(self, image_path):
+        """Called externally to update selection state of current image"""
+        if self.image_path == image_path:
+             self.preview_widget.set_selection_state(self._get_current_selection_state())
+
+    def set_is_selected_callback(self, callback):
+        self.is_selected_callback = callback
+
 
 if __name__ == '__main__':
     import sys

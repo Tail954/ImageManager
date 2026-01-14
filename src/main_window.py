@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
      QAbstractItemView, QLineEdit, QMenu, QRadioButton, QButtonGroup, QMessageBox, QProgressDialog, QComboBox, QStyledItemDelegate
 ) # yapf: disable
 from PyQt6.QtGui import QFileSystemModel, QPixmap, QIcon, QStandardItemModel, QStandardItem, QAction, QCloseEvent, QResizeEvent
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray # <--- ★QWIDGETSIZE_MAX のインポートを削除
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QVariant, QSortFilterProxyModel, QDirIterator, QModelIndex, QItemSelection, QByteArray, QItemSelectionModel # <--- ★QWIDGETSIZE_MAX のインポートを削除
 import os # For path operations
 from pathlib import Path # For path operations
 import json # For settings / metadata parsing
@@ -198,6 +198,48 @@ class MainWindow(QMainWindow):
             # --- ソート処理完了後、UIロックを解除 ---
             self.ui_manager.set_sort_buttons_enabled(True) # ソートボタン群を再度有効化
         self._update_status_bar_info()
+
+    # ★★★ 追加: 画像ビューワーからの選択切り替えサポート ★★★
+    def is_image_selected(self, image_path):
+        """指定されたパスの画像が現在選択されているかを返す"""
+        return image_path in self.selected_file_paths
+
+    def handle_toggle_view_selection(self, image_path):
+        """画像ビューワーからのリクエストに応じて、指定された画像の選択状態をトグルする"""
+        logger.debug(f"handle_toggle_view_selection called for: {image_path}")
+        
+        # Find the source index for the image_path
+        source_index = None
+        for row in range(self.ui_manager.source_thumbnail_model.rowCount()):
+             item = self.ui_manager.source_thumbnail_model.item(row)
+             if item and item.data(Qt.ItemDataRole.UserRole) == image_path:
+                 source_index = self.ui_manager.source_thumbnail_model.indexFromItem(item)
+                 break
+        
+        if not source_index:
+            logger.warning(f"handle_toggle_view_selection: Could not find item for {image_path}")
+            return
+
+        # Map to proxy index
+        proxy_index = self.ui_manager.filter_proxy_model.mapFromSource(source_index)
+        if not proxy_index.isValid():
+             logger.warning(f"handle_toggle_view_selection: Proxy index invalid for {image_path} (possibly filtered out)")
+             return
+
+        # Toggle selection
+        selection_model = self.ui_manager.thumbnail_view.selectionModel()
+        selection_model.select(proxy_index, QItemSelectionModel.SelectionFlag.Toggle)
+        
+        # Selection change will trigger handle_thumbnail_selection_changed via signal, 
+        # which updates self.selected_file_paths.
+        
+        # Explicitly update the dialogs' button state to match the new selection
+        # (Although the dialogs called this, we confirm the state change back to them)
+        if self.dialog_manager.full_image_dialog_instance and self.dialog_manager.full_image_dialog_instance.isVisible():
+             self.dialog_manager.full_image_dialog_instance.update_selection_state(image_path)
+             
+        if self.dialog_manager.image_with_metadata_dialog_instance and self.dialog_manager.image_with_metadata_dialog_instance.isVisible():
+             self.dialog_manager.image_with_metadata_dialog_instance.update_selection_state(image_path)
 
     def _create_menu_bar(self):
         """ メニューバーを作成し、アクションを直接配置 """

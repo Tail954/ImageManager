@@ -19,6 +19,7 @@ class ImagePreviewWidget(QWidget):
     previous_image_requested = pyqtSignal()
     next_image_requested = pyqtSignal()
     toggle_fullscreen_requested = pyqtSignal()
+    toggle_selection_requested = pyqtSignal() # New signal
 
     def __init__(self, parent=None, preview_mode=PREVIEW_MODE_FIT):
         super().__init__(parent)
@@ -51,6 +52,13 @@ class ImagePreviewWidget(QWidget):
         self.next_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.next_button.clicked.connect(self.next_image_requested.emit)
         self.controls_layout.addWidget(self.next_button)
+
+        # Selection Toggle Button
+        self.selection_button = QPushButton("Select")
+        self.selection_button.setCheckable(True)
+        self.selection_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.selection_button.clicked.connect(self.toggle_selection_requested.emit)
+        self.controls_layout.addWidget(self.selection_button)
         
         self.controls_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
@@ -77,8 +85,8 @@ class ImagePreviewWidget(QWidget):
             self.image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
             main_layout.addWidget(self.image_label, 1)
 
-    def update_image(self, image_path, current_index, total_count):
-        """Loads and sorts the image."""
+    def update_image(self, image_path, current_index, total_count, is_selected=False):
+        """Loads and sorts the image. is_selected: initial selection state."""
         if self.movie and self.movie.state() == QMovie.MovieState.Running:
             try:
                 self.movie.frameChanged.disconnect(self._update_movie_frame)
@@ -90,6 +98,7 @@ class ImagePreviewWidget(QWidget):
 
         self.image_path = image_path
         self._update_navigation_buttons(current_index, total_count)
+        self.set_selection_state(is_selected) # Update button state
 
         if not self.image_path:
             self.image_label.setText("表示できる画像がありません。")
@@ -291,3 +300,13 @@ class ImagePreviewWidget(QWidget):
 
     def update_fullscreen_button_text(self, text):
         self.fullscreen_button.setText(text)
+
+    def set_selection_state(self, is_selected):
+        """Updates the selection button state and appearance."""
+        self.selection_button.setChecked(is_selected)
+        if is_selected:
+            self.selection_button.setText("Selected")
+            self.selection_button.setStyleSheet("QPushButton { background-color: orange; color: black; font-weight: bold; }")
+        else:
+            self.selection_button.setText("Select")
+            self.selection_button.setStyleSheet("")
