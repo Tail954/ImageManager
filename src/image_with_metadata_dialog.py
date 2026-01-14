@@ -1,50 +1,65 @@
 import logging
 import os
-from PyQt6.QtWidgets import QDialog, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QSplitter
 from PyQt6.QtCore import Qt, QByteArray
 
 from .image_preview_widget import ImagePreviewWidget
-from .constants import PREVIEW_MODE_FIT
+from .metadata_widget import MetadataWidget
+from .constants import PREVIEW_MODE_FIT, METADATA_ROLE
+from .metadata_utils import extract_image_metadata
 
 logger = logging.getLogger(__name__)
 
-class FullImageDialog(QDialog):
-    def __init__(self, image_path_list, current_index, preview_mode=PREVIEW_MODE_FIT, parent=None):
+class ImageWithMetadataDialog(QDialog):
+    def __init__(self, image_path_list, current_index, main_window, preview_mode=PREVIEW_MODE_FIT, parent=None):
         super().__init__(parent)
         self.all_image_paths = image_path_list if image_path_list is not None else []
         self.current_index = current_index
+        self.main_window = main_window # To access metadata cache
         self.preview_mode = preview_mode
         self.saved_geometry = None 
-        self.image_path = None # Will be set in update_image/update_title
+        self.image_path = None 
 
-        self.setMinimumSize(400, 300)
-        self.resize(800, 600)
-        
-        # Main layout
+        self.setWindowTitle("画像とメタデータ - ImageManager")
+        self.resize(1200, 800) # Larger size for split view
+
         main_layout = QVBoxLayout(self)
-        # main_layout.setContentsMargins(0,0,0,0) 
-
-        self.preview_widget = ImagePreviewWidget(self, preview_mode)
-        main_layout.addWidget(self.preview_widget)
-
-        self.setLayout(main_layout)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
+        # Left: Image Preview
+        self.preview_widget = ImagePreviewWidget(self, preview_mode)
+        self.splitter.addWidget(self.preview_widget)
+
+        # Right: Metadata
+        self.metadata_widget = MetadataWidget(self)
+        self.splitter.addWidget(self.metadata_widget)
+
+        self.splitter.setSizes([800, 400]) # Initial ratio
+        self.splitter.setStretchFactor(0, 1) # Image takes more space
+        self.splitter.setStretchFactor(1, 0)
+
+        main_layout.addWidget(self.splitter)
+        self.setLayout(main_layout)
+
         # Connect signals
         self.preview_widget.previous_image_requested.connect(self.show_previous_image)
         self.preview_widget.next_image_requested.connect(self.show_next_image)
         self.preview_widget.toggle_fullscreen_requested.connect(self.toggle_fullscreen_state)
 
         # Initial Load
-        self._update_current_image_info() # Sets title and image_path
+        self._load_current_state()
+
+    def _load_current_state(self):
+        self._update_current_image_info()
         self.preview_widget.update_image(
             self.image_path, 
             self.current_index, 
             len(self.all_image_paths)
         )
-        self.setFocus() 
+        self._update_metadata_display()
+        self.setFocus()
 
     def _update_current_image_info(self):
-        """Updates internal state and window title based on current index."""
         if not self.all_image_paths:
             self.image_path = None
             self.current_index = -1
@@ -57,45 +72,55 @@ class FullImageDialog(QDialog):
         if self.current_index != -1:
             self.image_path = self.all_image_paths[self.current_index]
             try:
-                title_filename = os.path.basename(self.image_path)
-                self.setWindowTitle(f"{title_filename} - ImageManager")
+                base_name = os.path.basename(self.image_path)
+                self.setWindowTitle(f"{base_name} - ImageManager")
             except Exception:
                 self.setWindowTitle("ImageManager")
         else:
             self.image_path = None
             self.setWindowTitle("画像なし - ImageManager")
 
+    def _update_metadata_display(self):
+        if not self.image_path:
+            self.metadata_widget.update_metadata({})
+            return
+
+        # Try to get metadata from cache
+        metadata = self.main_window.metadata_cache.get(self.image_path)
+        
+        if not isinstance(metadata, dict):
+            # Not in cache, try to extract
+            try:
+                metadata = extract_image_metadata(self.image_path)
+                # Update cache
+                self.main_window.metadata_cache[self.image_path] = metadata
+            except Exception as e:
+                logger.error(f"Failed to extract metadata for {self.image_path}: {e}")
+                metadata = {}
+        
+        self.metadata_widget.update_metadata(metadata)
+
     def update_image(self, new_image_path_list, new_current_index):
-        """Updates the image list and current index, then loads the image."""
         self.all_image_paths = new_image_path_list if new_image_path_list is not None else []
         self.current_index = new_current_index
+        self._load_current_state()
         
-        self._update_current_image_info()
-        self.preview_widget.update_image(
-            self.image_path, 
-            self.current_index, 
-            len(self.all_image_paths)
-        )
-
         if not self.isVisible():
             self.show()
         self.raise_()
         self.activateWindow()
-        self.setFocus()
 
     def show_previous_image(self):
         if not self.all_image_paths or self.current_index <= 0:
             return
         self.current_index -= 1
-        self._update_current_image_info()
-        self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths))
+        self._load_current_state()
 
     def show_next_image(self):
         if not self.all_image_paths or self.current_index >= len(self.all_image_paths) - 1:
             return
         self.current_index += 1
-        self._update_current_image_info()
-        self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths))
+        self._load_current_state()
 
     def toggle_fullscreen_state(self):
         if self.windowState() == Qt.WindowState.WindowMaximized:
@@ -109,9 +134,6 @@ class FullImageDialog(QDialog):
                  self.saved_geometry = self.saveGeometry()
             self.setWindowState(Qt.WindowState.WindowMaximized)
             self.preview_widget.update_fullscreen_button_text("❐")
-        
-        # In case resize event isn't triggered or needed logic inside widget
-        # self.preview_widget.update() # Widget handles resizeEvent
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -126,25 +148,8 @@ class FullImageDialog(QDialog):
             event.accept()
         else:
             super().keyPressEvent(event)
-
+    
     def closeEvent(self, event):
-        # Movie stopping is handled in widget's update_image(None) or implicitly when widget is destroyed
         if self.preview_widget.movie:
             self.preview_widget.movie.stop()
         super().closeEvent(event)
-
-if __name__ == '__main__':
-    import sys
-    from PyQt6.QtWidgets import QApplication
-    
-    # Simple test
-    if len(sys.argv) > 1:
-        test_path = sys.argv[1]
-    else:
-        test_path = "test.jpg" # Dummy
-
-    app = QApplication(sys.argv)
-    # Mocking a list of images with just one image
-    dialog = FullImageDialog([test_path], 0)
-    dialog.show()
-    sys.exit(app.exec())

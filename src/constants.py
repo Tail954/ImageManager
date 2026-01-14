@@ -30,6 +30,12 @@ METADATA_DIALOG_GEOMETRY = "metadata_dialog_geometry"
 LAST_MOVE_DESTINATION_FOLDER = "last_move_destination_folder"
 LAST_COPY_DESTINATION_FOLDER = "last_copy_destination_folder"
 
+# --- ★★★ 追加: ダブルクリック時の動作 ★★★ ---
+DOUBLE_CLICK_ACTION = "double_click_action"
+DOUBLE_CLICK_ACTION_VIEWER = "viewer_only" # 画像ビューアのみ (従来)
+DOUBLE_CLICK_ACTION_VIEWER_METADATA = "viewer_metadata" # 画像とメタデータ
+
+
 # --- ★★★ 追加終わり ★★★ ---
 
 # --- Image File Extensions ---

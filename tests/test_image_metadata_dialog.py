@@ -144,16 +144,16 @@ class TestImageMetadataDialog:
         assert metadata_dialog.windowTitle() == "画像メタデータ: test.png" # Exact match
         
         # Check Text Selection Tab
-        metadata_dialog.tab_widget.setCurrentWidget(metadata_dialog.text_selection_tab) # Corrected attribute
-        assert metadata_dialog.ts_positive_prompt_edit.toPlainText() == "test positive prompt, tag1" # Corrected attribute
-        assert metadata_dialog.ts_negative_prompt_edit.toPlainText() == "test negative prompt, tag_neg" # Corrected attribute
-        assert metadata_dialog.ts_generation_info_edit.toPlainText() == "Steps: 20, Sampler: Euler a" # Corrected attribute
+        metadata_dialog.metadata_widget.tab_widget.setCurrentWidget(metadata_dialog.metadata_widget.text_selection_tab) # Corrected attribute
+        assert metadata_dialog.metadata_widget.ts_positive_prompt_edit.toPlainText() == "test positive prompt, tag1" # Corrected attribute
+        assert metadata_dialog.metadata_widget.ts_negative_prompt_edit.toPlainText() == "test negative prompt, tag_neg" # Corrected attribute
+        assert metadata_dialog.metadata_widget.ts_generation_info_edit.toPlainText() == "Steps: 20, Sampler: Euler a" # Corrected attribute
 
         # Check Tag Selection Tab
-        metadata_dialog.tab_widget.setCurrentWidget(metadata_dialog.tag_selection_tab) # Corrected attribute
-        assert metadata_dialog.tag_positive_browser.toPlainText() == "test positive prompt, tag1"
-        assert metadata_dialog.tag_negative_browser.toPlainText() == "test negative prompt, tag_neg"
-        assert metadata_dialog.tag_generation_info_edit.toPlainText() == "Steps: 20, Sampler: Euler a"
+        metadata_dialog.metadata_widget.tab_widget.setCurrentWidget(metadata_dialog.metadata_widget.tag_selection_tab) # Corrected attribute
+        assert metadata_dialog.metadata_widget.tag_positive_browser.toPlainText() == "test positive prompt, tag1"
+        assert metadata_dialog.metadata_widget.tag_negative_browser.toPlainText() == "test negative prompt, tag_neg"
+        assert metadata_dialog.metadata_widget.tag_generation_info_edit.toPlainText() == "Steps: 20, Sampler: Euler a"
         
         metadata_dialog.close()
 
@@ -166,11 +166,11 @@ class TestImageMetadataDialog:
         metadata_dialog.update_metadata(new_metadata, "new_test.png")
 
         assert metadata_dialog.windowTitle() == "画像メタデータ: new_test.png" # Exact match
-        metadata_dialog.tab_widget.setCurrentWidget(metadata_dialog.text_selection_tab) # Corrected attribute
-        assert metadata_dialog.ts_positive_prompt_edit.toPlainText() == "new positive, tag_new_pos" # Corrected attribute
+        metadata_dialog.metadata_widget.tab_widget.setCurrentWidget(metadata_dialog.metadata_widget.text_selection_tab) # Corrected attribute
+        assert metadata_dialog.metadata_widget.ts_positive_prompt_edit.toPlainText() == "new positive, tag_new_pos" # Corrected attribute
         
-        metadata_dialog.tab_widget.setCurrentWidget(metadata_dialog.tag_selection_tab) # Corrected attribute
-        assert metadata_dialog.tag_positive_browser.toPlainText() == "new positive, tag_new_pos"
+        metadata_dialog.metadata_widget.tab_widget.setCurrentWidget(metadata_dialog.metadata_widget.tag_selection_tab) # Corrected attribute
+        assert metadata_dialog.metadata_widget.tag_positive_browser.toPlainText() == "new positive, tag_new_pos"
         
         metadata_dialog.close()
 

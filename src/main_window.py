@@ -50,7 +50,8 @@ from .constants import (
     LAST_MOVE_DESTINATION_FOLDER, LAST_COPY_DESTINATION_FOLDER, # ファイル操作の最終宛先フォルダ
     INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # 初期ソート設定
     WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
-    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY # ジオメトリ定数をインポート
+    MAIN_WINDOW_GEOMETRY, METADATA_DIALOG_GEOMETRY, # ジオメトリ定数をインポート
+    DOUBLE_CLICK_ACTION, DOUBLE_CLICK_ACTION_VIEWER, DOUBLE_CLICK_ACTION_VIEWER_METADATA # ★★★ 追加 ★★★
 )
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,9 @@ class MainWindow(QMainWindow):
         # Load application-wide settings first
         self._load_app_settings()
 
-        # --- ★★★ UIセットアップをUIManagerに委譲 ★★★ ---
+        self.double_click_action = DOUBLE_CLICK_ACTION_VIEWER # ★★★ 追加: ダブルクリック動作 ★★★
+
+    # --- ★★★ UIセットアップをUIManagerに委譲 ★★★ ---
         self.ui_manager.setup_ui()
 
         # 設定からウィンドウジオメトリを復元 (UIセットアップ後、show()の前が望ましい)
@@ -237,6 +240,7 @@ class MainWindow(QMainWindow):
         self.app_settings["sort_button_id"] = self.current_sort_button_id # 新しいトグルボタンUI用
         self.app_settings[LAST_MOVE_DESTINATION_FOLDER] = self.last_move_destination_folder
         self.app_settings[LAST_COPY_DESTINATION_FOLDER] = self.last_copy_destination_folder
+        self.app_settings[DOUBLE_CLICK_ACTION] = self.double_click_action # ★★★ 追加 ★★★
 
         # ★★★ ウィンドウジオメトリの保存 ★★★
         self.app_settings[MAIN_WINDOW_GEOMETRY] = self.saveGeometry().toBase64().data().decode('utf-8')
@@ -346,6 +350,10 @@ class MainWindow(QMainWindow):
         # ★★★ 追加: フォルダ選択時の初期ソート設定 ★★★
         self.initial_folder_sort_setting = self.app_settings.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS) # ★★★ デフォルトを「常に読み込み順」に変更 ★★★
         logger.info(f"フォルダ選択時の初期ソート設定を読み込みました: {self.initial_folder_sort_setting}")
+
+        # ★★★ 追加: ダブルクリック動作設定 ★★★
+        self.double_click_action = self.app_settings.get(DOUBLE_CLICK_ACTION, DOUBLE_CLICK_ACTION_VIEWER)
+        logger.info(f"ダブルクリック動作設定を読み込みました: {self.double_click_action}")
 
         # ★★★ ウィンドウジオメトリの読み込み (適用は __init__ の最後で行う) ★★★
         if main_geom_str := self.app_settings.get(MAIN_WINDOW_GEOMETRY):
