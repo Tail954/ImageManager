@@ -56,6 +56,7 @@ class ImagePreviewWidget(QWidget):
         # Selection Toggle Button
         self.selection_button = QPushButton("Select")
         self.selection_button.setCheckable(True)
+        self.selection_button.setFixedSize(50, 50) # 丸いボタンにするために固定サイズを設定
         self.selection_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.selection_button.clicked.connect(self.toggle_selection_requested.emit)
         self.controls_layout.addWidget(self.selection_button)
@@ -305,8 +306,8 @@ class ImagePreviewWidget(QWidget):
         """Updates the selection button state and appearance."""
         self.selection_button.setChecked(is_selected)
         if is_selected:
-            self.selection_button.setText("Selected")
-            self.selection_button.setStyleSheet("QPushButton { background-color: orange; color: black; font-weight: bold; }")
+            self.selection_button.setText("✔")
+            self.selection_button.setStyleSheet("QPushButton { background-color: orange; color: black; font-weight: bold; border-radius: 25px; font-size: 20px; }")
         else:
             self.selection_button.setText("Select")
-            self.selection_button.setStyleSheet("")
+            self.selection_button.setStyleSheet("QPushButton { border-radius: 25px; border: 1px solid #ccc; background-color: #f0f0f0; }")

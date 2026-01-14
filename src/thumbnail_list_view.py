@@ -19,6 +19,7 @@ class ToggleSelectionListView(QListView):
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.indexAt(event.pos())
             if index.isValid(): # アイテム上でのクリック
+                self._last_pressed_index = index # ダブルクリック判定用に保存
                 selection_model = self.selectionModel()
                 # QItemSelectionModel.Toggle フラグは、指定されたインデックスの選択状態を反転させる
                 # 他のインデックスの選択状態には影響を与えない
@@ -26,6 +27,7 @@ class ToggleSelectionListView(QListView):
                 event.accept() 
                 return
             else: # アイテム外（何もないところ）でのクリック
+                self._last_pressed_index = QModelIndex() # 無効化
                 # 何もしないことで、現在の選択状態を維持する
                 event.accept()
                 return
@@ -76,6 +78,12 @@ class ToggleSelectionListView(QListView):
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.indexAt(event.pos())
             if index.isValid():
+                # ダブルクリックされた場合、最初のクリックで行われた選択トグルを打ち消す（元に戻す）
+                # これにより、「表示のためにダブルクリックしたら選択されてしまった」という挙動を防ぐ
+                if hasattr(self, '_last_pressed_index') and self._last_pressed_index == index:
+                    selection_model = self.selectionModel()
+                    selection_model.select(index, QItemSelectionModel.SelectionFlag.Toggle)
+
                 self.item_double_clicked.emit(index)
                 event.accept()
                 return
