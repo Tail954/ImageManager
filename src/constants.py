@@ -35,6 +35,11 @@ DOUBLE_CLICK_ACTION = "double_click_action"
 DOUBLE_CLICK_ACTION_VIEWER = "viewer_only" # 画像ビューアのみ (従来)
 DOUBLE_CLICK_ACTION_VIEWER_METADATA = "viewer_metadata" # 画像とメタデータ
 
+# --- ★★★ 追加: タグパレット設定 ★★★ ---
+TAGS_FOLDER_PATH = "tags_folder_path"
+DEFAULT_TAGS_FOLDER = ""
+TAG_PALETTE_GEOMETRY = "tag_palette_geometry"
+TAG_PALETTE_SPLITTER_STATE = "tag_palette_splitter_state"
 
 # --- ★★★ 追加終わり ★★★ ---
 

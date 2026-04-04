@@ -10,6 +10,7 @@ from .image_metadata_dialog import ImageMetadataDialog
 from .image_with_metadata_dialog import ImageWithMetadataDialog # ★★★ 追加 ★★★
 from .wc_creator_dialog import WCCreatorDialog
 from .drop_window import DropWindow
+from .tag_palette_window import TagPaletteWindow # ★★★ 追加 ★★★
 from .constants import (
     APP_SETTINGS_FILE,
     THUMBNAIL_RIGHT_CLICK_ACTION,
@@ -32,6 +33,7 @@ class DialogManager:
         self.drop_window_instance = None
         self.image_with_metadata_dialog_instance = None # ★★★ 追加 ★★★
         self.wc_creator_dialog_instance = None # モーダルなので毎回生成・破棄
+        self.tag_palette_window_instance = None # ★★★ 追加 ★★★
 
     def open_settings_dialog(self):
         """設定ダイアログを開き、変更を適用する。"""
@@ -343,3 +345,18 @@ class DialogManager:
         wc_dialog = WCCreatorDialog(selected_files_for_wc, metadata_for_wc, self.main_window.wc_creator_comment_format, self.main_window)
         wc_dialog.exec()
         logger.info("プロンプト整形ツールを閉じました。")
+
+    def toggle_tag_palette(self):
+        """タグパレットの表示/非表示を切り替える。"""
+        if self.tag_palette_window_instance is None:
+            logger.info("TagPaletteWindowのインスタンスを初めて作成します。")
+            self.tag_palette_window_instance = TagPaletteWindow(self.main_window)
+
+        if self.tag_palette_window_instance.isVisible():
+            logger.debug("TagPaletteWindowを非表示にします。")
+            self.tag_palette_window_instance.hide()
+        else:
+            logger.debug("TagPaletteWindowを表示します。")
+            self.tag_palette_window_instance.show()
+            self.tag_palette_window_instance.raise_()
+            self.tag_palette_window_instance.activateWindow()

@@ -262,11 +262,16 @@ class MainWindow(QMainWindow):
         wc_creator_action.triggered.connect(self.dialog_manager.open_wc_creator_dialog) # DialogManager経由で呼び出し
         tool_menu.addAction(wc_creator_action)
 
-        # 「D&Dウィンドウ」アクション
         toggle_drop_window_action = QAction("&D＆Dウィンドウ", self) # '&'でショートカットキーヒント
         toggle_drop_window_action.setStatusTip("画像のメタデータを表示するためのドラッグ＆ドロップウィンドウを開きます")
         toggle_drop_window_action.triggered.connect(self.dialog_manager.toggle_drop_window) # DialogManager経由で呼び出し
         tool_menu.addAction(toggle_drop_window_action) # 「D&Dウィンドウ」をツールメニューの一番下に追加
+
+        # 「タグパレット」アクション
+        toggle_tag_palette_action = QAction("タグパレット (&T)", self) # '&T' でアクセスキー T
+        toggle_tag_palette_action.setStatusTip("YAMLファイルから読み込んだタグを選択してクリップボードにコピーします")
+        toggle_tag_palette_action.triggered.connect(self.dialog_manager.toggle_tag_palette)
+        tool_menu.addAction(toggle_tag_palette_action)
 
     def _save_settings(self):
         """現在の設定をJSONファイルに保存する。"""
