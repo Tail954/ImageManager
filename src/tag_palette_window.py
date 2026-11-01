@@ -30,14 +30,14 @@ class DataWrapper:
         self.data = data
 
 class TagPaletteWindow(QWidget):
-    def __init__(self, main_window, parent=None):
+    def __init__(self, main_window, parent=None, *, settings_store):
         super().__init__(parent, Qt.WindowType.Window)
-        self.main_window = main_window
+        self.settings_store = settings_store
         self.setWindowTitle("タグパレット")
         self.resize(800, 600)
         
         # Tags directory check
-        self.tags_dir = self.main_window.app_settings.get(TAGS_FOLDER_PATH, DEFAULT_TAGS_FOLDER)
+        self.tags_dir = self.settings_store.get(TAGS_FOLDER_PATH, DEFAULT_TAGS_FOLDER)
         
         self.selected_tags = {}  # Use dict to keep order of added tags (Python 3.7+)
         self.button_widgets = []    # Keep references to keep state
@@ -55,11 +55,11 @@ class TagPaletteWindow(QWidget):
         self._restore_settings()
 
     def _restore_settings(self):
-        geom_str = self.main_window.app_settings.get(TAG_PALETTE_GEOMETRY)
+        geom_str = self.settings_store.get(TAG_PALETTE_GEOMETRY)
         if geom_str:
             self.restoreGeometry(QByteArray.fromBase64(geom_str.encode('utf-8')))
         
-        splitter_str = self.main_window.app_settings.get(TAG_PALETTE_SPLITTER_STATE)
+        splitter_str = self.settings_store.get(TAG_PALETTE_SPLITTER_STATE)
         if splitter_str:
             self.splitter.restoreState(QByteArray.fromBase64(splitter_str.encode('utf-8')))
 
@@ -70,9 +70,7 @@ class TagPaletteWindow(QWidget):
         )
         if selected_dir:
             self.tags_dir = selected_dir
-            # app_settingsに保存して次回起動時の初期フォルダとして記憶
-            self.main_window.app_settings[TAGS_FOLDER_PATH] = self.tags_dir
-            self.main_window._write_app_settings_file()
+            self.settings_store.save({TAGS_FOLDER_PATH: self.tags_dir})
             return True
         return False
 
@@ -292,9 +290,10 @@ class TagPaletteWindow(QWidget):
                     self._copy_to_clipboard()
 
     def _save_window_state(self):
-        self.main_window.app_settings[TAG_PALETTE_GEOMETRY] = self.saveGeometry().toBase64().data().decode('utf-8')
-        self.main_window.app_settings[TAG_PALETTE_SPLITTER_STATE] = self.splitter.saveState().toBase64().data().decode('utf-8')
-        self.main_window._write_app_settings_file()
+        self.settings_store.save({
+            TAG_PALETTE_GEOMETRY: self.saveGeometry().toBase64().data().decode('utf-8'),
+            TAG_PALETTE_SPLITTER_STATE: self.splitter.saveState().toBase64().data().decode('utf-8'),
+        })
 
     def hideEvent(self, event):
         self._save_window_state()

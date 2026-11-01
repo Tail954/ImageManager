@@ -3,21 +3,23 @@ import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTreeView,
     QSplitter, QFrame, QLineEdit, QRadioButton, QButtonGroup, QListView,
-    QAbstractItemView
+    QAbstractItemView, QTabWidget
 )
-from PyQt6.QtGui import QFileSystemModel, QStandardItemModel, QStandardItem
-from PyQt6.QtCore import Qt, QSize, QDir, QItemSelection, QItemSelectionModel, QModelIndex
+from PyQt6.QtGui import QFileSystemModel, QStandardItemModel
+from PyQt6.QtCore import Qt, QSize
 
+from .favorites_panel import FavoritesPanel
 from .thumbnail_list_view import ToggleSelectionListView
 from .thumbnail_delegate import ThumbnailDelegate
 from .metadata_filter_proxy_model import MetadataFilterProxyModel
-from .constants import SELECTION_ORDER_ROLE # SELECTION_ORDER_ROLE をインポート
 
 logger = logging.getLogger(__name__)
 
 class UIManager:
     def __init__(self, main_window):
         self.mw = main_window # MainWindowへの参照
+        self.thumbnails = None
+        self.selection = None
 
         # UI要素への参照を保持
         self.folder_select_button = None
@@ -47,7 +49,6 @@ class UIManager:
         self.source_thumbnail_model = None
         self.filter_proxy_model = None
         self.left_panel_widget_ref = None # 左パネルへの参照を保持
-        self.left_panel_overlay_widget = None # 左パネル専用オーバーレイ
         self.splitter = None # スプリッターへの参照を追加
 
     def setup_ui(self):
@@ -73,13 +74,6 @@ class UIManager:
         # この値はUIの見た目に応じて調整してください
         self.left_panel_widget_ref.setMaximumWidth(350) 
         self.splitter.addWidget(self.left_panel_widget_ref)
-
-        # 左パネル用オーバーレイウィジェットの作成
-        self.left_panel_overlay_widget = QWidget(self.left_panel_widget_ref) # 親を左パネルに
-        self.left_panel_overlay_widget.setObjectName("leftPanelOverlayWidget")
-        self.left_panel_overlay_widget.setStyleSheet("QWidget#leftPanelOverlayWidget { background-color: rgba(0, 0, 0, 70); }")
-        self.left_panel_overlay_widget.hide() # 初期状態は非表示
-        # サイズと位置は set_ui_locked で調整
 
         # ファイル操作ボタンの初期状態設定 (コピーモードに応じて)
         self.set_file_op_buttons_enabled_ui(True)
@@ -131,7 +125,11 @@ class UIManager:
         self.folder_tree_view.setModel(self.file_system_model)
         for i in range(1, self.file_system_model.columnCount()):
             self.folder_tree_view.hideColumn(i)
-        left_layout.addWidget(self.folder_tree_view)
+        self.folder_navigation_tabs = QTabWidget()
+        self.favorites_panel = FavoritesPanel()
+        self.folder_navigation_tabs.addTab(self.favorites_panel, "お気に入り")
+        self.folder_navigation_tabs.addTab(self.folder_tree_view, "フォルダ")
+        left_layout.addWidget(self.folder_navigation_tabs)
         self.folder_tree_view.clicked.connect(self.mw.on_folder_tree_clicked)
 
         return left_panel
@@ -286,19 +284,21 @@ class UIManager:
                 button.setEnabled(enabled)
         # logger.debug(f"Sort buttons enabled state set to: {enabled}")
 
+    def bind_controllers(self, thumbnails, selection):
+        self.thumbnails = thumbnails
+        self.selection = selection
+
     def set_ui_locked(self, locked: bool):
-        """指定された状態に基づいて左パネルUIをオーバーレイでロック/アンロックする。
-        サムネイル読み込みなど、比較的時間がかかる操作に使用する。
-        """
-        if self.left_panel_overlay_widget and self.left_panel_widget_ref:
-            if locked:
-                # left_panel_overlay_widget を left_panel_widget_ref のサイズに合わせ、最前面に表示
-                self.left_panel_overlay_widget.setGeometry(self.left_panel_widget_ref.rect())
-                self.left_panel_overlay_widget.raise_()
-                self.left_panel_overlay_widget.show()
-            else:
-                self.left_panel_overlay_widget.hide()
-        logger.debug(f"Left Panel UI Lock state set to: {locked}")
+        # Navigation remains usable during thumbnail loading.
+        for widget in (self.recursive_toggle_button, self.select_all_button,
+                       self.deselect_all_button, self.and_radio_button, self.or_radio_button,
+                       self.positive_prompt_filter_edit, self.negative_prompt_filter_edit,
+                       self.generation_info_filter_edit, self.apply_filter_button,
+                       self.thumbnail_view):
+            if widget is not None:
+                widget.setEnabled(not locked)
+        self.set_sort_buttons_enabled(not locked)
+        self.set_file_op_buttons_enabled_ui(not locked)
 
     def set_file_op_buttons_enabled_ui(self, enabled):
         """ファイル操作に関連するボタン（移動、コピー、コピーモード切替）の有効/無効を切り替える。
@@ -310,12 +310,7 @@ class UIManager:
         logger.debug(f"File operation buttons enabled state set to: {enabled} (considering copy mode: {self.mw.is_copy_mode})")
 
     def set_thumbnail_loading_ui_state(self, loading: bool):
-        """サムネイル読み込み中のUI状態を設定する。
-        左パネル全体をオーバーレイでロック/アンロックし、ファイル操作ボタンも無効化/有効化する。
-        """
         self.set_ui_locked(loading)
-        # サムネイル読み込み中はファイル操作ボタンも無効化するのが自然
-        self.set_file_op_buttons_enabled_ui(not loading)
 
     def update_thumbnail_view_sizes(self):
         if self.thumbnail_view:
@@ -323,89 +318,7 @@ class UIManager:
             self.thumbnail_view.setGridSize(QSize(self.mw.current_thumbnail_size + 10, self.mw.current_thumbnail_size + 10))
 
     def apply_filters_preserving_selection(self, positive_text, negative_text, generation_text, search_mode):
-        """
-        フィルタを適用し、可能な限り現在の選択状態を維持します。
-        """
-        logger.debug(f"UIManager.apply_filters_preserving_selection called. Filters: P='{positive_text}', N='{negative_text}', G='{generation_text}', Mode='{search_mode}'")
-        main_window = self.mw # MainWindow への参照
-        selection_model = self.thumbnail_view.selectionModel()
-
-        if not selection_model:
-            logger.warning("apply_filters_preserving_selection: Thumbnail view selection model not available.")
-            return
-
-        # 1. 現在の選択状態を保存 (ファイルパスのセットとして)
-        #    コピーモードの場合は、QStandardItem の参照も保持して、後で順序を復元できるようにする。
-        previously_selected_paths = set()
-        # (item_ref, original_ui_order_number) のタプルをリストで保持
-        previously_selected_copy_items_info = []
-
-        current_selected_proxy_indexes = selection_model.selectedIndexes()
-
-        logger.debug(f"  Current selected proxy indexes count: {len(current_selected_proxy_indexes)}")
-        if main_window.is_copy_mode:
-            # main_window.copy_selection_order (QStandardItemのリスト) を信頼する
-            for i, item_ref in enumerate(main_window.copy_selection_order):
-                path = item_ref.data(Qt.ItemDataRole.UserRole)
-                if path:
-                    previously_selected_paths.add(path)
-                    # SELECTION_ORDER_ROLE は1から始まるUI上の番号
-                    order_role_val = item_ref.data(SELECTION_ORDER_ROLE)
-                    previously_selected_copy_items_info.append((item_ref, order_role_val if order_role_val is not None else i + 1))
-            logger.debug(f"  Copy Mode: previously_selected_paths (from copy_selection_order, count: {len(previously_selected_paths)}): {sorted(list(previously_selected_paths))[:5]}")
-        else:
-            for proxy_idx in current_selected_proxy_indexes:
-                if proxy_idx.column() == 0: # 最初の列のインデックスのみ処理
-                    source_idx = self.filter_proxy_model.mapToSource(proxy_idx)
-                    item = self.source_thumbnail_model.itemFromIndex(source_idx)
-                    if item:
-                        path = item.data(Qt.ItemDataRole.UserRole)
-                        if path:
-                            previously_selected_paths.add(path)
-            logger.debug(f"  Move Mode: previously_selected_paths (from selectionModel, count: {len(previously_selected_paths)}): {list(previously_selected_paths)[:5]}")
-        
-        # logger.debug(f"UIManager: Preserving selection for {len(previously_selected_paths)} paths.") # Redundant with above
-
-        # 2. フィルタをプロキシモデルに設定 & 適用
-        logger.debug("  Setting filter parameters on proxy model and calling invalidateFilter...")
-        self.filter_proxy_model.set_search_mode(search_mode)
-        self.filter_proxy_model.set_positive_prompt_filter(positive_text)
-        self.filter_proxy_model.set_negative_prompt_filter(negative_text)
-        self.filter_proxy_model.set_generation_info_filter(generation_text)
-        self.filter_proxy_model.invalidateFilter() # これによりビューが更新される
-        logger.debug(f"  invalidateFilter called. Proxy model row count after filter: {self.filter_proxy_model.rowCount()}")
-
-        # 3. 選択を復元
-        new_selection_to_apply_on_view = QItemSelection()
-        
-        # フィルタ後に表示されるアイテムで、かつ以前選択されていたアイテムを収集
-        # ソースモデルをイテレートする
-        for row in range(self.source_thumbnail_model.rowCount()):
-            source_item = self.source_thumbnail_model.item(row)
-            if not source_item: continue
-
-            file_path = source_item.data(Qt.ItemDataRole.UserRole)
-            if file_path in previously_selected_paths: # 以前選択されていたパスか
-                source_index = self.source_thumbnail_model.indexFromItem(source_item)
-                proxy_index = self.filter_proxy_model.mapFromSource(source_index)
-                if proxy_index.isValid(): # フィルタ後も表示されているか
-                    # logger.debug(f"    Restoring selection for path: {file_path}, proxy_index: {proxy_index.row()}")
-                    new_selection_to_apply_on_view.select(proxy_index, proxy_index)
-        
-        logger.debug(f"  Constructed new_selection_to_apply_on_view with {len(new_selection_to_apply_on_view.indexes())} proxy indexes.")
-
-        # 4. ビューの選択を更新
-        #    QItemSelectionModel.ClearAndSelect を使用すると、
-        #    既存の選択をクリアし、新しい選択を適用し、selectionChanged シグナルが発行される。
-        #    MainWindow.handle_thumbnail_selection_changed がこのシグナルを受けて、
-        #    selected_file_paths や copy_selection_order (コピーモード時) を適切に更新する。
-        logger.debug("  Calling selection_model.select with ClearAndSelect flag.")
-        # selectionChangedシグナルが発火するように、ブロックせずに実行
-        selection_model.select(new_selection_to_apply_on_view, QItemSelectionModel.SelectionFlag.ClearAndSelect)
-        
-        # main_window._update_status_bar_info() は handle_thumbnail_selection_changed の中で呼ばれるので、
-        # ここでは直接呼び出さない。
-        # logger.debug(f"UIManager.apply_filters_preserving_selection finished. Selection restoration command issued for {len(new_selection_to_apply_on_view.indexes())} items in view.")
-        # ★★★ フィルタ適用後、選択状態の有無に関わらずステータスバーを更新 ★★★
-        self.mw._update_status_bar_info()
-        logger.debug(f"UIManager.apply_filters_preserving_selection finished. Status bar updated. Selection restoration command issued for {len(new_selection_to_apply_on_view.indexes())} items in view.")
+        if self.selection is None:
+            raise RuntimeError("UIManager controllers are not bound")
+        self.selection.apply_filters(positive_text, negative_text, generation_text, search_mode,
+                                     preserve_selection=True)

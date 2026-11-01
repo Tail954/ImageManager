@@ -30,7 +30,7 @@ class TestSelectionToggle(unittest.TestCase):
         
         widget.update_image("test.jpg", 0, 1, is_selected=True)
         self.assertTrue(widget.selection_button.isChecked())
-        self.assertEqual(widget.selection_button.text(), "Selected")
+        self.assertEqual(widget.selection_button.text(), "✔")
         
         # Test signal emission
         tensor_mock = MagicMock()

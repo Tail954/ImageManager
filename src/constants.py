@@ -3,6 +3,7 @@ from PyQt6.QtCore import Qt
 
 # --- Application Settings ---
 APP_SETTINGS_FILE = "app_settings.json"
+FAVORITE_FOLDERS = "favorite_folders"
 
 METADATA_ROLE = Qt.ItemDataRole.UserRole + 1
 SELECTION_ORDER_ROLE = Qt.ItemDataRole.UserRole + 2

@@ -15,12 +15,7 @@ class TestWCCreatorDialog(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Qtアプリケーションのセットアップ
-        cls.app = QApplication([])
-
-    @classmethod
-    def tearDownClass(cls):
-        # Qtアプリケーションのクリーンアップ
-        cls.app.quit()
+        cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
         # テスト用のモックデータ

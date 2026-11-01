@@ -16,11 +16,14 @@ class ImageWithMetadataDialog(QDialog):
     toggle_fullscreen_requested = pyqtSignal(bool)
     toggle_selection_requested = pyqtSignal(str) # New signal
 
-    def __init__(self, image_path_list, current_index, main_window, preview_mode=PREVIEW_MODE_FIT, parent=None):
+    def __init__(self, image_path_list, current_index, main_window, preview_mode=PREVIEW_MODE_FIT,
+                 parent=None, *, metadata_for=None, cache_metadata=None, is_selected_callback=None):
         super().__init__(parent)
         self.all_image_paths = image_path_list if image_path_list is not None else []
         self.current_index = current_index
-        self.main_window = main_window # To access metadata cache
+        self.metadata_for = metadata_for or (lambda path: main_window.metadata_cache.get(path))
+        self.cache_metadata = cache_metadata or (lambda path, data: main_window.metadata_cache.__setitem__(path, data))
+        self.is_selected_callback = is_selected_callback or main_window.is_image_selected
         self.preview_mode = preview_mode
         self.saved_geometry = None 
         self.image_path = None 
@@ -93,14 +96,14 @@ class ImageWithMetadataDialog(QDialog):
             return
 
         # Try to get metadata from cache
-        metadata = self.main_window.metadata_cache.get(self.image_path)
+        metadata = self.metadata_for(self.image_path)
         
         if not isinstance(metadata, dict):
             # Not in cache, try to extract
             try:
                 metadata = extract_image_metadata(self.image_path)
                 # Update cache
-                self.main_window.metadata_cache[self.image_path] = metadata
+                self.cache_metadata(self.image_path, metadata)
             except Exception as e:
                 logger.error(f"Failed to extract metadata for {self.image_path}: {e}")
                 metadata = {}
@@ -172,8 +175,8 @@ class ImageWithMetadataDialog(QDialog):
             self.update_selection_state(self.image_path)
 
     def _get_current_selection_state(self):
-        if self.image_path and hasattr(self.main_window, 'is_image_selected'):
-            return self.main_window.is_image_selected(self.image_path)
+        if self.image_path:
+            return self.is_selected_callback(self.image_path)
         return False
 
     def update_selection_state(self, image_path):

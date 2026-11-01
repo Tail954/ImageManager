@@ -43,7 +43,8 @@ class FullImageDialog(QDialog):
         self.preview_widget.update_image(
             self.image_path, 
             self.current_index, 
-            len(self.all_image_paths)
+            len(self.all_image_paths),
+            self._get_current_selection_state(),
         )
         self.setFocus() 
 
@@ -78,7 +79,8 @@ class FullImageDialog(QDialog):
         self.preview_widget.update_image(
             self.image_path, 
             self.current_index, 
-            len(self.all_image_paths)
+            len(self.all_image_paths),
+            self._get_current_selection_state(),
         )
 
         if not self.isVisible():
@@ -92,14 +94,12 @@ class FullImageDialog(QDialog):
             return
         self.current_index -= 1
         self._update_current_image_info()
-        self._update_current_image_info()
         self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths), self._get_current_selection_state())
 
     def show_next_image(self):
         if not self.all_image_paths or self.current_index >= len(self.all_image_paths) - 1:
             return
         self.current_index += 1
-        self._update_current_image_info()
         self._update_current_image_info()
         self.preview_widget.update_image(self.image_path, self.current_index, len(self.all_image_paths), self._get_current_selection_state())
 

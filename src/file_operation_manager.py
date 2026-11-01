@@ -1,155 +1,128 @@
-# src/file_operation_manager.py
-import logging
+"""GUI coordinator for immutable file requests and one-time result application."""
+
+import itertools
 import os
-from PyQt6.QtWidgets import QFileDialog, QProgressDialog, QMessageBox
+
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QProgressDialog
 
+from .file_operation_types import FileOperationRequest
 from .renamed_files_dialog import RenamedFilesDialog
-from .constants import SELECTION_ORDER_ROLE # SELECTION_ORDER_ROLE をインポート
 
-logger = logging.getLogger(__name__)
 
 class FileOperationManager:
     def __init__(self, main_window):
         self.main_window = main_window
         self.progress_dialog = None
+        self._ids = itertools.count(1)
+        self._active_id = None
+        self._applied = set()
+
+    def bind_service(self):
+        service = self.main_window.file_operations
+        service.progress.connect(self._handle_file_op_progress)
+        service.result.connect(self._handle_file_op_finished)
 
     def _handle_move_files_button_clicked(self):
-        logger.debug(f"Move files button clicked. Selected files: {self.main_window.selected_file_paths}")
-        if not self.main_window.selected_file_paths:
-            logger.info("移動するファイルが選択されていません。")
-            self.main_window.statusBar.showMessage("移動するファイルを選択してください。", 3000)
-            return
-        
-        # ★★★ 移動先フォルダの初期値を設定 ★★★
-        initial_move_dir = ""
-        if self.main_window.last_move_destination_folder and os.path.isdir(self.main_window.last_move_destination_folder):
-            initial_move_dir = self.main_window.last_move_destination_folder
-        elif self.main_window.current_folder_path and os.path.isdir(self.main_window.current_folder_path):
-            initial_move_dir = self.main_window.current_folder_path
-        destination_folder = QFileDialog.getExistingDirectory(self.main_window, "移動先フォルダを選択", initial_move_dir)
-        if destination_folder:
-            logger.info(f"移動先フォルダが選択されました: {destination_folder}")
-            logger.info(f"移動対象ファイル: {self.main_window.selected_file_paths}")
-            if self.main_window.file_operations.start_operation("move", self.main_window.selected_file_paths, destination_folder):
-                self.main_window.ui_manager.set_file_op_buttons_enabled_ui(False) # ★★★ UIManager経由 ★★★
-                total_files_to_move = len(self.main_window.selected_file_paths)
-                self.progress_dialog = QProgressDialog(
-                    f"ファイルを移動中... (0/{total_files_to_move})",
-                    "キャンセル", 0, total_files_to_move, self.main_window
-                )
-                self.progress_dialog.setWindowTitle("ファイル移動")
-                self.progress_dialog.setMinimumDuration(0)
-                self.progress_dialog.canceled.connect(self.main_window.file_operations.stop_operation)
-                self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-                self.progress_dialog.setValue(0)
-            else:
-                self.main_window.statusBar.showMessage("別のファイル操作が実行中です。", 3000)
-        else:
-            logger.info("移動先フォルダの選択がキャンセルされました。")
+        self._start_dialog("move")
 
     def _handle_copy_files_button_clicked(self):
-        logger.debug(f"Copy files button clicked. Copy selection order: {[item.data(Qt.ItemDataRole.UserRole) for item in self.main_window.copy_selection_order]}")
-        if not self.main_window.copy_selection_order:
-            logger.info("コピーするファイルが選択されていません (選択順)。")
-            self.main_window.statusBar.showMessage("コピーするファイルを順番に選択してください。", 3000)
-            return
+        self._start_dialog("copy")
 
-        # ★★★ コピー先フォルダの初期値を設定 ★★★
-        initial_copy_dir = ""
-        if self.main_window.last_copy_destination_folder and os.path.isdir(self.main_window.last_copy_destination_folder):
-            initial_copy_dir = self.main_window.last_copy_destination_folder
-        elif self.main_window.current_folder_path and os.path.isdir(self.main_window.current_folder_path):
-            initial_copy_dir = self.main_window.current_folder_path
-        destination_folder = QFileDialog.getExistingDirectory(self.main_window, "コピー先フォルダを選択", initial_copy_dir)
-        if destination_folder:
-            if self.main_window.file_operations.start_operation("copy", None, destination_folder, copy_selection_order=self.main_window.copy_selection_order):
-                self.main_window.ui_manager.set_file_op_buttons_enabled_ui(False) # ★★★ UIManager経由 ★★★
-                total_files_to_copy = len(self.main_window.copy_selection_order)
-                self.progress_dialog = QProgressDialog(
-                    f"ファイルをコピー中... (0/{total_files_to_copy})",
-                    "キャンセル", 0, total_files_to_copy, self.main_window
-                )
-                self.progress_dialog.setWindowTitle("ファイルコピー")
-                self.progress_dialog.setMinimumDuration(0)
-                self.progress_dialog.canceled.connect(self.main_window.file_operations.stop_operation)
-                self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-                self.progress_dialog.setValue(0)
-            else:
-                self.main_window.statusBar.showMessage("別のファイル操作が実行中です。", 3000)
-        else:
-            logger.info("コピー先フォルダの選択がキャンセルされました。")
+    def _start_dialog(self, operation_type):
+        mw = self.main_window
+        if mw._closing or mw.is_loading_thumbnails or mw.file_operations.is_busy():
+            return
+        paths = (mw.selection_controller.copy_paths() if operation_type == "copy"
+                 else mw.selection_controller.selected_paths())
+        if not paths:
+            mw.statusBar.showMessage("操作するファイルを選択してください。", 3000)
+            return
+        last = (mw.last_copy_destination_folder if operation_type == "copy"
+                else mw.last_move_destination_folder)
+        start = last if last and os.path.isdir(last) else (mw.current_folder_path or "")
+        destination = QFileDialog.getExistingDirectory(
+            mw, "コピー先フォルダを選択" if operation_type == "copy" else "移動先フォルダを選択", start)
+        if not destination:
+            return
+        self.start(operation_type, paths, destination)
+
+    def start(self, operation_type, paths, destination_folder):
+        mw = self.main_window
+        if mw._closing or mw.is_loading_thumbnails or mw.file_operations.is_busy() or self._active_id is not None:
+            return False
+        request = FileOperationRequest(next(self._ids), operation_type,
+                                       tuple(paths), destination_folder)
+        if not mw.file_operations.start(request):
+            return False
+        self._active_id = request.operation_id
+        total = len(request.source_paths)
+        dialog = QProgressDialog(f"処理中... 0/{total}", "キャンセル", 0, total, mw)
+        dialog.setWindowTitle("ファイルコピー" if operation_type == "copy" else "ファイル移動")
+        dialog.setMinimumDuration(0)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.canceled.connect(mw.file_operations.stop_operation)
+        self.progress_dialog = dialog
+        dialog.setValue(0)
+        mw._update_operation_locks()
+        return True
 
     def _handle_copy_mode_toggled(self, checked):
-        self.main_window.is_copy_mode = checked
-        if checked:
-            self.main_window.ui_manager.update_copy_mode_button_text(True) # ★★★ UIManager経由 ★★★
-            self.main_window.ui_manager.move_files_button.setEnabled(False) # ★★★ UIManager経由 ★★★
-            self.main_window.ui_manager.copy_files_button.setEnabled(True) # ★★★ UIManager経由 ★★★
-            self.main_window.deselect_all_thumbnails()
-            self.main_window.copy_selection_order.clear()
-            logger.info("Copy Mode Enabled.")
-        else:
-            self.main_window.ui_manager.update_copy_mode_button_text(False) # ★★★ UIManager経由 ★★★
-            self.main_window.ui_manager.move_files_button.setEnabled(True) # ★★★ UIManager経由 ★★★
-            self.main_window.ui_manager.copy_files_button.setEnabled(False) # ★★★ UIManager経由 ★★★
-            self.main_window.deselect_all_thumbnails()
-            self.main_window.copy_selection_order.clear()
-            logger.info("Copy Mode Disabled (Move Mode Enabled).")
-            for row_idx in range(self.main_window.ui_manager.source_thumbnail_model.rowCount()):
-                item = self.main_window.ui_manager.source_thumbnail_model.item(row_idx)
-                if item and item.data(SELECTION_ORDER_ROLE) is not None: # 定数 SELECTION_ORDER_ROLE を直接使用
-                    item.setData(None, SELECTION_ORDER_ROLE) # 定数 SELECTION_ORDER_ROLE を直接使用
-                    source_idx = self.main_window.ui_manager.source_thumbnail_model.indexFromItem(item)
-                    proxy_idx = self.main_window.ui_manager.filter_proxy_model.mapFromSource(source_idx)
-                    if proxy_idx.isValid():
-                         self.main_window.ui_manager.thumbnail_view.update(proxy_idx) # ★★★ UIManager経由 ★★★
+        mw = self.main_window
+        mw.is_copy_mode = checked
+        mw.selection_controller.set_copy_mode(checked)
+        mw.ui_manager.update_copy_mode_button_text(checked)
+        mw._update_operation_locks()
 
-    # def _set_file_op_buttons_enabled(self, enabled): # このメソッドは UIManager に移管される想定
-    #     self.main_window.ui_manager.set_file_op_buttons_enabled_ui(enabled)
-
-    def _handle_file_op_progress(self, processed_count, total_count):
+    def _handle_file_op_progress(self, operation_id, processed, total):
         dialog = self.progress_dialog
-        if dialog:
-            if dialog.wasCanceled():
-                logger.debug(f"Progress update ({processed_count}/{total_count}) received but progress_dialog was canceled by user.")
-                return
-            try:
-                dialog.setMaximum(total_count)
-                dialog.setValue(processed_count)
-                dialog.setLabelText(f"処理中: {processed_count}/{total_count} ファイル...")
-            except RuntimeError as e:
-                logger.warning(f"Error updating progress dialog (likely already closed or invalid): {e}")
-        else:
-            logger.debug(f"Progress update ({processed_count}/{total_count}) received but self.progress_dialog was already None.")
-
-    def _handle_file_op_error(self, error_message):
-        logger.error(f"File operation error: {error_message}")
-        if self.progress_dialog:
-            self.progress_dialog.close()
-            self.progress_dialog = None
-        QMessageBox.critical(self.main_window, "ファイル操作エラー", f"エラーが発生しました:\n{error_message}")
-        self.main_window.statusBar.showMessage("ファイル操作中にエラーが発生しました。", 5000)
-        self.main_window.ui_manager.set_file_op_buttons_enabled_ui(True) # ★★★ UIManager経由 ★★★
+        if operation_id != self._active_id or dialog is None or dialog.wasCanceled():
+            return
+        dialog.setMaximum(total)
+        dialog.setValue(processed)
+        dialog.setLabelText(f"処理中: {processed}/{total} ファイル...")
 
     def _handle_file_op_finished(self, result):
-        logger.info(f"File operation finished. Result: {result}")
-        if self.progress_dialog:
-            try:
-                # プログレスダイアログを閉じる前に、canceledシグナルを切断
-                self.progress_dialog.canceled.disconnect(self.main_window.file_operations.stop_operation)
-            except TypeError:
-                logger.debug("Progress dialog canceled signal was not connected or already disconnected.")
+        if result.operation_id != self._active_id:
+            return
+        if self.progress_dialog is not None:
+            self.progress_dialog.canceled.disconnect(self.main_window.file_operations.stop_operation)
             self.progress_dialog.close()
             self.progress_dialog = None
-        self.main_window.ui_manager.set_file_op_buttons_enabled_ui(True) # ★★★ UIManager経由 ★★★
-        # status = result.get('status', 'unknown') # No longer directly used here
-        # operation_type = result.get('operation_type', 'unknown') # No longer directly used here
+        self.apply_result(result)
+        self._active_id = None
 
-        # Call MainWindow's method to process the completion details
-        self.main_window._process_file_op_completion(result)
+    def apply_result(self, result):
+        if result.operation_id in self._applied:
+            return
+        self._applied.add(result.operation_id)
+        mw = self.main_window
+        successes = result.successes
+        if result.operation_type == "move":
+            moved = tuple(success.source_path for success in successes)
+            mw.selection_controller.remove_paths(moved)
+            mw.thumbnail_controller.remove_paths(moved)
+            renamed = [{"original": os.path.basename(success.source_path),
+                        "new": os.path.basename(success.destination_path)}
+                       for success in successes
+                       if os.path.basename(success.source_path) != os.path.basename(success.destination_path)]
+            if renamed:
+                RenamedFilesDialog(renamed, mw).exec()
+            if successes and os.path.isdir(result.destination_folder):
+                mw.last_move_destination_folder = result.destination_folder
+        elif result.operation_type == "copy" and successes and os.path.isdir(result.destination_folder):
+            mw.last_copy_destination_folder = result.destination_folder
+        if result.errors:
+            QMessageBox.warning(mw, "ファイル操作エラー", "\n".join(result.errors))
+        if result.status == "completed" and not result.errors:
+            mw.selection_controller.clear()
+        if result.status == "cancelled":
+            mw.statusBar.showMessage(f"{len(successes)}個を処理後、キャンセルしました。", 5000)
+        elif result.status == "error":
+            mw.statusBar.showMessage("ファイル操作中にエラーが発生しました。", 5000)
+        else:
+            verb = "コピー" if result.operation_type == "copy" else "移動"
+            mw.statusBar.showMessage(f"{len(successes)}個のファイルを{verb}しました。", 5000)
 
-    def _handle_cancel_op_button_clicked(self): # Not directly used by FileOperations, but for completeness if UI had explicit cancel
-        logger.info("Cancel button clicked. Requesting to stop file operation.")
-        if self.main_window.file_operations:
-            self.main_window.file_operations.stop_operation()
+    def _handle_cancel_op_button_clicked(self):
+        self.main_window.file_operations.stop_operation()

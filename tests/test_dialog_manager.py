@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import os
 import sys
+import tempfile
 
 # Ensure src directory is in Python path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -20,8 +21,10 @@ from src.constants import (
     DELETE_EMPTY_FOLDERS_ENABLED,
     INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, # ★★★ 初期ソート設定 ★★★
     THUMBNAIL_RIGHT_CLICK_ACTION, WC_COMMENT_OUTPUT_FORMAT, # For app_settings keys
-    METADATA_ROLE, Qt as ConstantsQt # For item data roles
+    METADATA_ROLE, Qt as ConstantsQt, # For item data roles
+    DOUBLE_CLICK_ACTION_VIEWER
 )
+from src.settings_store import SettingsStore
 
 # Mock QMessageBox for tests that might trigger it
 from PyQt6.QtWidgets import QMessageBox, QApplication, QDialog # Added QApplication, QDialog
@@ -40,9 +43,15 @@ class TestDialogManager(unittest.TestCase):
         self.mock_main_window.is_loading_thumbnails = False
         self.mock_main_window.initial_folder_sort_setting = SORT_BY_LAST_SELECTED # ★★★ 追加: 初期ソート設定のモック ★★★
         self.mock_main_window.delete_empty_folders_enabled = True # ★★★ 追加: MainWindowのモックに属性を追加 ★★★
-        self.mock_main_window.app_settings = {} # Mock app_settings dictionary
+        self.mock_main_window.double_click_action = DOUBLE_CLICK_ACTION_VIEWER
+        self.settings_dir = tempfile.TemporaryDirectory(dir=os.getcwd())
+        self.settings_store = SettingsStore(os.path.join(self.settings_dir.name, "settings.json"))
+        self.settings_store.load()
         self.mock_main_window._write_app_settings_file = MagicMock()
-        self.mock_main_window.apply_thumbnail_size_change = MagicMock(return_value=True)
+        def apply_size(size):
+            self.mock_main_window.current_thumbnail_size = size
+            return True
+        self.mock_main_window.apply_thumbnail_size_change = MagicMock(side_effect=apply_size)
 
         # ★★★ UIManager のモックを追加 ★★★
         self.mock_ui_manager = MagicMock()
@@ -56,12 +65,22 @@ class TestDialogManager(unittest.TestCase):
         # MainWindow's METADATA_ROLE is used by DialogManager, so ensure it's available
         self.mock_main_window.METADATA_ROLE = METADATA_ROLE
         # Mocks for ImageMetadataDialog interaction
-        self.mock_main_window.metadata_cache = {}
+        self._metadata_cache = {}
+        self.mock_main_window.metadata_cache = self._metadata_cache
         self.mock_main_window.metadata_dialog_last_geometry = None
 
 
 
-        self.dialog_manager = DialogManager(self.mock_main_window)
+        self.dialog_manager = DialogManager(self.mock_main_window, self.settings_store)
+        self.mock_thumbnails = MagicMock()
+        self.mock_thumbnails.metadata_for.side_effect = lambda path: self._metadata_cache.get(path)
+        self.mock_thumbnails.cache_metadata.side_effect = lambda path, metadata: self._metadata_cache.__setitem__(path, metadata)
+        self.mock_selection = MagicMock()
+        self.mock_selection.selected_paths.return_value = ()
+        self.dialog_manager.bind_controllers(self.mock_thumbnails, self.mock_selection)
+
+    def tearDown(self):
+        self.settings_dir.cleanup()
 
     @patch('src.dialog_manager.SettingsDialog') # Patch SettingsDialog where it's imported in dialog_manager
     def test_open_settings_dialog_accepted_no_changes(self, MockSettingsDialog):
@@ -76,6 +95,7 @@ class TestDialogManager(unittest.TestCase):
         mock_dialog_instance.get_selected_thumbnail_size.return_value = self.mock_main_window.current_thumbnail_size
         mock_dialog_instance.get_selected_initial_folder_sort_setting.return_value = self.mock_main_window.initial_folder_sort_setting # ★★★ 追加 ★★★
         mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
+        mock_dialog_instance.get_selected_double_click_action.return_value = self.mock_main_window.double_click_action
 
         self.dialog_manager.open_settings_dialog()
 
@@ -87,10 +107,11 @@ class TestDialogManager(unittest.TestCase):
             current_wc_comment_format=self.mock_main_window.wc_creator_comment_format,
             current_initial_folder_sort_setting=self.mock_main_window.initial_folder_sort_setting, # ★★★ 追加 ★★★
             current_delete_empty_folders_setting=self.mock_main_window.delete_empty_folders_enabled, # ★★★ 追加 ★★★
+            current_double_click_action=self.mock_main_window.double_click_action,
             parent=self.mock_main_window
         )
         mock_dialog_instance.exec.assert_called_once()
-        self.mock_main_window._write_app_settings_file.assert_called_once() # Settings are always written on OK
+        self.assertTrue(os.path.exists(self.settings_store.path))
         self.mock_main_window.apply_thumbnail_size_change.assert_not_called() # Size didn't change
 
     @patch('src.dialog_manager.SettingsDialog')
@@ -108,6 +129,7 @@ class TestDialogManager(unittest.TestCase):
         mock_dialog_instance.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
         mock_dialog_instance.get_selected_initial_folder_sort_setting.return_value = self.mock_main_window.initial_folder_sort_setting # ★★★ 追加 ★★★
         mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
+        mock_dialog_instance.get_selected_double_click_action.return_value = self.mock_main_window.double_click_action
 
         # Mock QMessageBox.question to simulate user confirming "Ok"
         mock_qmessagebox_question.return_value = QMessageBox.StandardButton.Ok
@@ -117,10 +139,29 @@ class TestDialogManager(unittest.TestCase):
 
         mock_qmessagebox_question.assert_called_once() # Ensure confirmation was asked
         self.mock_main_window.apply_thumbnail_size_change.assert_called_once_with(new_thumb_size)
-        self.assertEqual(self.mock_main_window.app_settings["thumbnail_size"], new_thumb_size)
-        self.assertEqual(self.mock_main_window.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT], self.mock_main_window.initial_folder_sort_setting) # ★★★ 追加 ★★★
-        self.assertEqual(self.mock_main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED], self.mock_main_window.delete_empty_folders_enabled) # ★★★ 追加 ★★★
-        self.mock_main_window._write_app_settings_file.assert_called_once()
+        self.assertEqual(self.settings_store.get("thumbnail_size"), new_thumb_size)
+        self.assertEqual(self.settings_store.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT), self.mock_main_window.initial_folder_sort_setting)
+        self.assertEqual(self.settings_store.get(DELETE_EMPTY_FOLDERS_ENABLED), self.mock_main_window.delete_empty_folders_enabled)
+
+    @patch('src.dialog_manager.SettingsDialog')
+    @patch('src.dialog_manager.QMessageBox.question', return_value=QMessageBox.StandardButton.Ok)
+    def test_rejected_thumbnail_size_is_not_persisted(self, _question, MockSettingsDialog):
+        dialog = MockSettingsDialog.return_value
+        dialog.exec.return_value = True
+        dialog.get_selected_thumbnail_size.return_value = 200
+        dialog.get_selected_preview_mode.return_value = self.mock_main_window.image_preview_mode
+        dialog.get_selected_right_click_action.return_value = self.mock_main_window.thumbnail_right_click_action
+        dialog.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
+        dialog.get_selected_initial_folder_sort_setting.return_value = self.mock_main_window.initial_folder_sort_setting
+        dialog.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled
+        dialog.get_selected_double_click_action.return_value = self.mock_main_window.double_click_action
+        self.mock_main_window.apply_thumbnail_size_change.side_effect = lambda _size: False
+
+        self.dialog_manager.open_settings_dialog()
+
+        self.mock_main_window.apply_thumbnail_size_change.assert_called_once_with(200)
+        self.assertEqual(self.mock_main_window.current_thumbnail_size, 128)
+        self.assertEqual(self.settings_store.get("thumbnail_size"), 128)
 
     @patch('src.dialog_manager.SettingsDialog')
     def test_open_settings_dialog_accepted_initial_folder_sort_changed(self, MockSettingsDialog):
@@ -136,18 +177,18 @@ class TestDialogManager(unittest.TestCase):
         mock_dialog_instance.get_selected_right_click_action.return_value = self.mock_main_window.thumbnail_right_click_action
         mock_dialog_instance.get_selected_wc_comment_format.return_value = self.mock_main_window.wc_creator_comment_format
         mock_dialog_instance.get_selected_delete_empty_folders_setting.return_value = self.mock_main_window.delete_empty_folders_enabled
+        mock_dialog_instance.get_selected_double_click_action.return_value = self.mock_main_window.double_click_action
 
         self.dialog_manager.open_settings_dialog()
 
         self.assertEqual(self.mock_main_window.initial_folder_sort_setting, new_initial_sort)
-        self.assertEqual(self.mock_main_window.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT], new_initial_sort)
-        self.mock_main_window._write_app_settings_file.assert_called_once()
+        self.assertEqual(self.settings_store.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT), new_initial_sort)
         # Ensure other settings were not inadvertently affected
-        self.assertEqual(self.mock_main_window.app_settings["thumbnail_size"], self.mock_main_window.current_thumbnail_size)
-        self.assertEqual(self.mock_main_window.app_settings["image_preview_mode"], self.mock_main_window.image_preview_mode)
-        self.assertEqual(self.mock_main_window.app_settings[THUMBNAIL_RIGHT_CLICK_ACTION], self.mock_main_window.thumbnail_right_click_action)
-        self.assertEqual(self.mock_main_window.app_settings[WC_COMMENT_OUTPUT_FORMAT], self.mock_main_window.wc_creator_comment_format)
-        self.assertEqual(self.mock_main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED], self.mock_main_window.delete_empty_folders_enabled)
+        self.assertEqual(self.settings_store.get("thumbnail_size"), self.mock_main_window.current_thumbnail_size)
+        self.assertEqual(self.settings_store.get("image_preview_mode"), self.mock_main_window.image_preview_mode)
+        self.assertEqual(self.settings_store.get(THUMBNAIL_RIGHT_CLICK_ACTION), self.mock_main_window.thumbnail_right_click_action)
+        self.assertEqual(self.settings_store.get(WC_COMMENT_OUTPUT_FORMAT), self.mock_main_window.wc_creator_comment_format)
+        self.assertEqual(self.settings_store.get(DELETE_EMPTY_FOLDERS_ENABLED), self.mock_main_window.delete_empty_folders_enabled)
 
         # Reset mock_main_window's setting for subsequent tests if necessary
         self.mock_main_window.initial_folder_sort_setting = SORT_BY_LAST_SELECTED
@@ -161,7 +202,7 @@ class TestDialogManager(unittest.TestCase):
         self.dialog_manager.open_settings_dialog()
 
         mock_dialog_instance.exec.assert_called_once()
-        self.mock_main_window._write_app_settings_file.assert_not_called()
+        self.assertFalse(os.path.exists(self.settings_store.path))
         self.mock_main_window.apply_thumbnail_size_change.assert_not_called()
 
     # --- Tests for open_full_image_dialog ---
@@ -271,13 +312,8 @@ class TestDialogManager(unittest.TestCase):
         return mock_proxy_index
 
     @patch('src.dialog_manager.ImageMetadataDialog')
-    @patch('src.dialog_manager.QApplication') 
-    def test_open_metadata_dialog_new_instance_from_item(self, MockQApplication, MockImageMetadataDialog):
+    def test_open_metadata_dialog_new_instance_from_item(self, MockImageMetadataDialog):
         """Test opening a new ImageMetadataDialog using metadata from the item."""
-        mock_screen = MagicMock()
-        mock_screen.availableGeometry.return_value = MagicMock() 
-        MockQApplication.primaryScreen.return_value = mock_screen
-
         test_metadata = {"positive": "from item"}
         mock_proxy_idx = self._prepare_mocks_for_metadata_dialog(metadata_in_item=test_metadata)
         mock_dialog_instance = MockImageMetadataDialog.return_value
@@ -294,13 +330,8 @@ class TestDialogManager(unittest.TestCase):
         self.assertIs(self.dialog_manager.metadata_dialog_instance, mock_dialog_instance)
 
     @patch('src.dialog_manager.ImageMetadataDialog')
-    @patch('src.dialog_manager.QApplication')
-    def test_open_metadata_dialog_existing_instance_update(self, MockQApplication, MockImageMetadataDialog):
+    def test_open_metadata_dialog_existing_instance_update(self, MockImageMetadataDialog):
         """Test updating an existing ImageMetadataDialog instance."""
-        mock_screen = MagicMock()
-        mock_screen.availableGeometry.return_value = MagicMock()
-        MockQApplication.primaryScreen.return_value = mock_screen
-
         test_metadata_cache = {"positive": "from cache"}
         mock_proxy_idx = self._prepare_mocks_for_metadata_dialog(metadata_in_item=None, metadata_in_cache=test_metadata_cache)
 
@@ -400,45 +431,17 @@ class TestDialogManager(unittest.TestCase):
     # --- Tests for WCCreatorDialog interaction ---
 
     def _prepare_mocks_for_wc_creator(self, selected_item_details=None):
-        """Helper to set up mocks for open_wc_creator_dialog tests."""
+        """Seed path selection and controller metadata through public APIs."""
         if selected_item_details is None:
             selected_item_details = [] 
-
-        mock_selected_proxy_indexes = []
-        
-        map_to_source_dict = {}
-        item_from_index_dict = {}
-
         self.mock_main_window.metadata_cache.clear()
-
-        for i, (file_path, metadata_on_item, metadata_in_cache) in enumerate(selected_item_details):
-            mock_proxy_idx = MagicMock(name=f"proxy_idx_{i}")
-            mock_proxy_idx.column.return_value = 0
-            mock_selected_proxy_indexes.append(mock_proxy_idx)
-
-            mock_source_idx = MagicMock(name=f"source_idx_{i}")
-            map_to_source_dict[mock_proxy_idx] = mock_source_idx
-            
-            mock_item = MagicMock(name=f"item_{i}")
-            
-            def create_item_data_side_effect(fp_local, meta_local):
-                def item_data_side_effect(role):
-                    if role == ConstantsQt.ItemDataRole.UserRole:
-                        return fp_local
-                    elif role == METADATA_ROLE:
-                        return meta_local
-                    return None
-                return item_data_side_effect
-
-            mock_item.data = MagicMock(side_effect=create_item_data_side_effect(file_path, metadata_on_item))
-            item_from_index_dict[mock_source_idx] = mock_item
-
-            if metadata_in_cache is not None: # Ensure None isn't added to cache
-                self.mock_main_window.metadata_cache[file_path] = metadata_in_cache # metadata_cache is on main_window
-        
-        self.mock_ui_manager.filter_proxy_model.mapToSource = MagicMock(side_effect=lambda p_idx: map_to_source_dict.get(p_idx))
-        self.mock_ui_manager.source_thumbnail_model.itemFromIndex = MagicMock(side_effect=lambda s_idx: item_from_index_dict.get(s_idx))
-        self.mock_ui_manager.thumbnail_view.selectionModel.return_value.selectedIndexes.return_value = mock_selected_proxy_indexes
+        selected_paths = []
+        for file_path, metadata_on_item, metadata_in_cache in selected_item_details:
+            selected_paths.append(file_path)
+            metadata = metadata_in_cache if metadata_in_cache is not None else metadata_on_item
+            if metadata is not None:
+                self.mock_main_window.metadata_cache[file_path] = metadata
+        self.mock_selection.selected_paths.return_value = tuple(selected_paths)
 
     @patch('src.dialog_manager.WCCreatorDialog')
     @patch('src.dialog_manager.QMessageBox') 

@@ -1,6 +1,7 @@
 import unittest # unittest を使用するように変更
 import os # os をインポート
 import time # time をインポート
+import tempfile
 from PyQt6.QtWidgets import QApplication # QApplication をインポート
 from PyQt6.QtCore import Qt, QModelIndex, QVariant # QModelIndex, QVariant をインポート
 from PyQt6.QtGui import QStandardItemModel, QStandardItem # QStandardItemModel, QStandardItem をインポート
@@ -32,7 +33,8 @@ class TestMetadataFilterProxyModel(unittest.TestCase):
         self.proxy_model.setSourceModel(self.source_model)
 
         # テストデータ用のダミーファイルパスとメタデータ
-        self.test_data_dir = os.path.join(os.path.dirname(__file__), "test_data", "proxy_model_sort")
+        self._test_dir = tempfile.TemporaryDirectory()
+        self.test_data_dir = self._test_dir.name
         os.makedirs(self.test_data_dir, exist_ok=True)
 
         self.files_info = [
@@ -67,13 +69,7 @@ class TestMetadataFilterProxyModel(unittest.TestCase):
             self.source_model.appendRow(item)
 
     def tearDown(self):
-        # テスト後にダミーファイルを削除
-        for info in self.files_info:
-            file_path = os.path.join(self.test_data_dir, info["name"])
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        if os.path.exists(self.test_data_dir) and not os.listdir(self.test_data_dir):
-            os.rmdir(self.test_data_dir)
+        self._test_dir.cleanup()
 
     def get_proxy_item_texts(self):
         texts = []

@@ -16,11 +16,7 @@ from src.constants import WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT
 class TestWCController(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = QApplication([])
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.app.quit()
+        cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
         self.controller = WCController()

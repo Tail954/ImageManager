@@ -1,26 +1,20 @@
 # src/settings_dialog.py (WC Creator 設定追加・完全版)
 import logging
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QGroupBox, QRadioButton, QDialogButtonBox, QApplication, QCheckBox,
+    QDialog, QVBoxLayout, QGroupBox, QRadioButton, QDialogButtonBox, QCheckBox,
     QSlider, QLabel, QHBoxLayout, QWidget, QSizePolicy, QComboBox, QButtonGroup
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPainter, QColor, QPen
 from src.constants import (
-    APP_SETTINGS_FILE, # Import APP_SETTINGS_FILE
     PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM, # Import preview modes
-    THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, # Import right click actions
-    WC_COMMENT_OUTPUT_FORMAT, WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT, # Import WC Creator constants
-    DELETE_EMPTY_FOLDERS_ENABLED, 
-    INITIAL_SORT_ORDER_ON_FOLDER_SELECT, # 初期ソート設定キー
+    RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU,
+    WC_FORMAT_HASH_COMMENT, WC_FORMAT_BRACKET_COMMENT,
     SORT_BY_LOAD_ORDER_ALWAYS,           # 常に読み込み順
     SORT_BY_LAST_SELECTED,                # 前回選択されたソート順
-    DOUBLE_CLICK_ACTION,
     DOUBLE_CLICK_ACTION_VIEWER,
     DOUBLE_CLICK_ACTION_VIEWER_METADATA
 ) 
-import json
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +77,7 @@ class SettingsDialog(QDialog):
         self.initial_delete_empty_folders_setting = current_delete_empty_folders_setting
         self.initial_double_click_action = current_double_click_action # ★★★ 追加 ★★★
 
-        # アプリケーション設定ファイルからダイアログに関連する値を読み込む
-        # MainWindowと責任範囲を分けるため、このダイアログは自身の表示に必要な設定のみを
-        # 直接ファイルから読み込む（ただし、MainWindowが主たる設定管理を行う）
-        self.current_settings = self._load_settings_for_dialog_display()
-        self.initial_preview_mode = self.current_settings.get("image_preview_mode", PREVIEW_MODE_FIT)
-        # DELETE_EMPTY_FOLDERS_ENABLED は MainWindow から渡される値を優先
-        # INITIAL_SORT_ORDER_ON_FOLDER_SELECT も MainWindow から渡される値を優先
-        # self.initial_wc_comment_format はコンストラクタ引数で受け取ったものを優先する
+        self.initial_preview_mode = current_preview_mode
 
         main_layout = QVBoxLayout(self)
 
@@ -225,27 +212,6 @@ class SettingsDialog(QDialog):
         except IndexError:
             logger.error(f"Slider value {value} is out of range for available_thumbnail_sizes.")
 
-    def _load_settings_for_dialog_display(self):
-        """ダイアログ表示に必要な設定（主に初期値）をファイルから読み込む"""
-        # MainWindow が主たる設定管理者なので、ここでは読み込みエラー時に過度に介入しない
-        default_values = {
-            "image_preview_mode": PREVIEW_MODE_FIT,
-            # WC_COMMENT_OUTPUT_FORMAT は MainWindow から渡される値を優先するため、ここでは読み込まない
-            # DELETE_EMPTY_FOLDERS_ENABLED も MainWindow から渡される値を優先
-        }
-        try:
-            if os.path.exists(APP_SETTINGS_FILE):
-                with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-                    # 必要なキーだけをロード
-                    loaded_settings = default_values.copy()
-                    if "image_preview_mode" in settings:
-                        loaded_settings["image_preview_mode"] = settings["image_preview_mode"]
-                    return loaded_settings
-        except Exception as e:
-            logger.error(f"設定ファイル ({APP_SETTINGS_FILE}) の読み込み中にエラー (SettingsDialog): {e}", exc_info=True)
-        return default_values # エラー時やファイルがない場合はデフォルト
-
     def accept(self):
         # MainWindowがこのダイアログのget_selected_...メソッドを呼び出して値を取得し、
         # 実際の保存処理はMainWindow側で行う。
@@ -280,88 +246,3 @@ class SettingsDialog(QDialog):
         if self.viewer_metadata_radio.isChecked():
             return DOUBLE_CLICK_ACTION_VIEWER_METADATA
         return DOUBLE_CLICK_ACTION_VIEWER
-
-
-if __name__ == '__main__':
-    import sys
-    # Dummy data for testing
-    available_sizes_test = [96, 128, 200, 256]
-    current_size_test = 128
-    current_preview_mode_test = PREVIEW_MODE_FIT
-    current_delete_empty_folders_test = True
-    current_initial_sort_test = SORT_BY_LOAD_ORDER_ALWAYS
-
-    # Create a dummy app_settings.json for testing if it doesn't exist
-    dummy_settings_for_test = {
-        "image_preview_mode": PREVIEW_MODE_ORIGINAL_ZOOM,
-        "thumbnail_size": 128,
-        THUMBNAIL_RIGHT_CLICK_ACTION: RIGHT_CLICK_ACTION_METADATA, # Add new setting for test
-        DELETE_EMPTY_FOLDERS_ENABLED: False,
-        INITIAL_SORT_ORDER_ON_FOLDER_SELECT: SORT_BY_LOAD_ORDER_ALWAYS,
-        "other_setting": "test",
-    }
-    if not os.path.exists(APP_SETTINGS_FILE):
-        with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(dummy_settings_for_test, f, indent=4)
-    else: # Ensure it has expected keys for test
-        with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-            temp_settings = json.load(f)
-        temp_settings.setdefault("image_preview_mode", PREVIEW_MODE_FIT)
-        temp_settings.setdefault("thumbnail_size", 128)
-        temp_settings.setdefault(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
-        temp_settings.setdefault(DELETE_EMPTY_FOLDERS_ENABLED, True)
-        temp_settings.setdefault(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LAST_SELECTED)
-        with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(temp_settings, f, indent=4)
-
-
-    app = QApplication(sys.argv)
-    # Test with initial right click action
-    current_right_click_action_test = dummy_settings_for_test.get(THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA)
-    current_initial_sort_test = dummy_settings_for_test.get(INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS) # ★★★ デフォルト変更 ★★★
-    current_delete_empty_folders_test = dummy_settings_for_test.get(DELETE_EMPTY_FOLDERS_ENABLED, True) # ★★★ 追加 ★★★
-    dialog = SettingsDialog(
-        current_thumbnail_size=current_size_test,
-        available_thumbnail_sizes=available_sizes_test,
-        current_preview_mode=current_preview_mode_test,
-        current_right_click_action=current_right_click_action_test,
-        current_wc_comment_format=WC_FORMAT_HASH_COMMENT, # Dummy for test
-        current_initial_folder_sort_setting=current_initial_sort_test,
-        current_delete_empty_folders_setting=current_delete_empty_folders_test
-    )
-    if dialog.exec():
-        print("Settings accepted by dialog.")
-        selected_size = dialog.get_selected_thumbnail_size()
-        selected_mode = dialog.get_selected_preview_mode()
-        selected_right_click_action = dialog.get_selected_right_click_action()
-        selected_initial_sort = dialog.get_selected_initial_folder_sort_setting()
-        selected_delete_empty = dialog.get_selected_delete_empty_folders_setting()
-        print(f"Selected thumbnail size from dialog: {selected_size}")
-        print(f"Selected preview mode from dialog: {selected_mode}")
-        print(f"Selected right-click action from dialog: {selected_right_click_action}")
-        print(f"Selected initial folder sort setting from dialog: {selected_initial_sort}")
-        print(f"Selected delete empty folders setting from dialog: {selected_delete_empty}")
-
-        # Simulate MainWindow saving the settings
-        # In real app, MainWindow would show confirmation for thumbnail size change
-        # and then save all settings.
-        print("Simulating MainWindow saving all settings...")
-        main_window_settings_to_save = {}
-        if os.path.exists(APP_SETTINGS_FILE):
-             with open(APP_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                main_window_settings_to_save = json.load(f)
-        
-        main_window_settings_to_save["thumbnail_size"] = selected_size
-        main_window_settings_to_save["image_preview_mode"] = selected_mode
-        main_window_settings_to_save[THUMBNAIL_RIGHT_CLICK_ACTION] = selected_right_click_action
-        main_window_settings_to_save[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = selected_initial_sort # ★★★ 追加 ★★★
-        main_window_settings_to_save[DELETE_EMPTY_FOLDERS_ENABLED] = selected_delete_empty # ★★★ 追加 ★★★
-
-        with open(APP_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(main_window_settings_to_save, f, indent=4)
-        print(f"MainWindow saved: {main_window_settings_to_save}")
-
-    else:
-        print("Settings cancelled by dialog.")
-    
-    sys.exit()
