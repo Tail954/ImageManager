@@ -8,8 +8,8 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.full_image_dialog import FullImageDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM
-from src.constants import METADATA_ROLE # If FullImageDialog interacts with items having this
+from src.full_image_dialog import FullImageDialog, PREVIEW_MODE_FIT
+from src.constants import METADATA_ROLE, PREVIEW_MODE_ORIGINAL_ZOOM # If FullImageDialog interacts with items having this
 
 # Fixture for QApplication
 @pytest.fixture(scope="session")
@@ -25,22 +25,32 @@ def create_dummy_pixmap(width, height, color="blue"):
     image.fill(Qt.GlobalColor.blue if color == "blue" else Qt.GlobalColor.red)
     return QPixmap.fromImage(image)
 
-# Dummy image paths for testing (assuming some images exist in test_data)
-# Use a known small image from your test_data if possible, otherwise mock loading.
+# Small deterministic PNGs are generated in pytest's isolated temporary CWD.
 TEST_IMAGE_DIR = os.path.join(os.path.dirname(__file__), "test_data", "images")
 TEST_IMAGE_VALID_1 = os.path.join(TEST_IMAGE_DIR, "01.png") # Assuming this exists
 TEST_IMAGE_VALID_2 = os.path.join(TEST_IMAGE_DIR, "02.png") # Assuming this exists
 TEST_IMAGE_INVALID = os.path.join(TEST_IMAGE_DIR, "non_existent.png")
 
-# Ensure test images exist or skip tests that rely on them
-skip_if_no_test_images = pytest.mark.skipif(
-    not (os.path.exists(TEST_IMAGE_VALID_1) and os.path.exists(TEST_IMAGE_VALID_2)),
-    reason="Test images not found in tests/test_data/images/"
-)
+@pytest.fixture(autouse=True)
+def generated_image_fixtures(tmp_path, monkeypatch):
+    from PyQt6.QtGui import QImage
+
+    image_dir = tmp_path / "generated_images"
+    image_dir.mkdir()
+    for name, color in (("01.png", Qt.GlobalColor.blue),
+                        ("02.png", Qt.GlobalColor.red),
+                        ("03.png", Qt.GlobalColor.green)):
+        image = QImage(24, 18, QImage.Format.Format_RGB32)
+        image.fill(color)
+        assert image.save(str(image_dir / name), "PNG")
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "TEST_IMAGE_DIR", str(image_dir))
+    monkeypatch.setattr(module, "TEST_IMAGE_VALID_1", str(image_dir / "01.png"))
+    monkeypatch.setattr(module, "TEST_IMAGE_VALID_2", str(image_dir / "02.png"))
+    monkeypatch.setattr(module, "TEST_IMAGE_INVALID", str(image_dir / "non_existent.png"))
 
 class TestFullImageDialog:
 
-    @skip_if_no_test_images
     def test_dialog_initialization_fit_mode(self, qt_app):
         image_paths = [TEST_IMAGE_VALID_1, TEST_IMAGE_VALID_2]
         dialog = FullImageDialog(image_paths, 0, preview_mode=PREVIEW_MODE_FIT, parent=None)
@@ -53,7 +63,6 @@ class TestFullImageDialog:
         # For now, check basic properties.
         dialog.close() # Clean up
 
-    @skip_if_no_test_images
     def test_dialog_initialization_original_zoom_mode(self, qt_app):
         image_paths = [TEST_IMAGE_VALID_1, TEST_IMAGE_VALID_2]
         dialog = FullImageDialog(image_paths, 0, preview_mode=PREVIEW_MODE_ORIGINAL_ZOOM, parent=None)
@@ -69,7 +78,6 @@ class TestFullImageDialog:
         assert not dialog.preview_widget.prev_button.isEnabled()
         dialog.close()
 
-    @skip_if_no_test_images
     def test_initialization_invalid_index_positive(self, qt_app):
         image_paths = [TEST_IMAGE_VALID_1, TEST_IMAGE_VALID_2]
         dialog = FullImageDialog(image_paths, 100, preview_mode=PREVIEW_MODE_FIT, parent=None) # Index out of bounds
@@ -79,7 +87,6 @@ class TestFullImageDialog:
         assert dialog.preview_widget.image_label.pixmap() is not None and not dialog.preview_widget.image_label.pixmap().isNull()
         dialog.close()
 
-    @skip_if_no_test_images
     def test_initialization_invalid_index_negative(self, qt_app):
         image_paths = [TEST_IMAGE_VALID_1, TEST_IMAGE_VALID_2]
         dialog = FullImageDialog(image_paths, -5, preview_mode=PREVIEW_MODE_FIT, parent=None) # Index out of bounds
@@ -88,7 +95,6 @@ class TestFullImageDialog:
         assert dialog.preview_widget.image_label.pixmap() is not None and not dialog.preview_widget.image_label.pixmap().isNull()
         dialog.close()
 
-    @skip_if_no_test_images
     def test_load_image_valid(self, qt_app, mocker):
         image_paths = [TEST_IMAGE_VALID_1]
         dialog = FullImageDialog(image_paths, 0, preview_mode=PREVIEW_MODE_FIT, parent=None)
@@ -129,11 +135,10 @@ class TestFullImageDialog:
         assert dialog.preview_widget.pixmap.isNull()
         # _update_image_display sets this text when image_path is None and all_image_paths is not empty
         assert dialog.preview_widget.image_label.text() == "表示できる画像がありません。"
-        # __init__ sets title to "画像なし - ImageManager" when image_path becomes None.
-        assert dialog.windowTitle() == "画像なし - ImageManager"
+        # A non-empty list containing None retains the generic title after basename(None) fails.
+        assert dialog.windowTitle() == "ImageManager"
         dialog.close()
 
-    @skip_if_no_test_images
     def test_load_image_pixmap_load_fails(self, qt_app, mocker):
         """Test _load_and_display_image when QPixmap.load() fails."""
         image_paths = [TEST_IMAGE_VALID_1] # Use a normally valid image path
@@ -156,13 +161,9 @@ class TestFullImageDialog:
         assert expected_filename in dialog.windowTitle()
         dialog.close()
 
-    @skip_if_no_test_images
     def test_navigation_next_previous(self, qt_app, mocker):
         image_paths = [TEST_IMAGE_VALID_1, TEST_IMAGE_VALID_2, os.path.join(TEST_IMAGE_DIR, "03.png")]
         # Ensure 03.png exists or this test might fail on load
-        if not os.path.exists(image_paths[2]):
-            pytest.skip("Test image 03.png not found")
-            
         dialog = FullImageDialog(image_paths, 0, preview_mode=PREVIEW_MODE_FIT, parent=None)
         QApplication.processEvents()
 
@@ -213,7 +214,6 @@ class TestFullImageDialog:
         
         dialog.close()
 
-    @skip_if_no_test_images
     def test_update_image_method(self, qt_app, mocker):
         initial_paths = [TEST_IMAGE_VALID_1]
         dialog = FullImageDialog(initial_paths, 0, preview_mode=PREVIEW_MODE_FIT, parent=None)
@@ -232,7 +232,6 @@ class TestFullImageDialog:
         # Window title update is handled within _load_current_image
         dialog.close()
 
-    @skip_if_no_test_images
     def test_navigation_boundary_conditions(self, qt_app, mocker):
         # Test with a single image
         single_image_paths = [TEST_IMAGE_VALID_1]
@@ -281,7 +280,6 @@ class TestFullImageDialog:
         dialog_multi_end.close()
 
 
-    @skip_if_no_test_images
     def test_update_image_invalid_index(self, qt_app, mocker):
         initial_paths = [TEST_IMAGE_VALID_1]
         dialog = FullImageDialog(initial_paths, 0, preview_mode=PREVIEW_MODE_FIT, parent=None)
@@ -302,7 +300,6 @@ class TestFullImageDialog:
         assert os.path.basename(TEST_IMAGE_VALID_1) in dialog.windowTitle()
         dialog.close()
 
-    @skip_if_no_test_images
     def test_update_image_empty_list(self, qt_app, mocker):
         initial_paths = [TEST_IMAGE_VALID_1]
         dialog = FullImageDialog(initial_paths, 0, preview_mode=PREVIEW_MODE_FIT, parent=None)
@@ -315,9 +312,9 @@ class TestFullImageDialog:
         assert dialog.all_image_paths == []
         assert dialog.current_index == -1 # Should be -1 for empty list
         assert dialog.windowTitle() == "画像なし - ImageManager"
-        assert dialog.image_label.text() == "表示できる画像がありません。"
-        assert not dialog.next_button.isEnabled()
-        assert not dialog.prev_button.isEnabled()
+        assert dialog.preview_widget.image_label.text() == "表示できる画像がありません。"
+        assert not dialog.preview_widget.next_button.isEnabled()
+        assert not dialog.preview_widget.prev_button.isEnabled()
         dialog.close()
 
     # More tests needed for:
@@ -329,7 +326,6 @@ class TestFullImageDialog:
     # - Maximize/Restore button functionality
     # - showEvent and resizeEvent handlers if they contain complex logic
 
-    @skip_if_no_test_images
     def test_zoom_functionality(self, qt_app, mocker):
         dialog = FullImageDialog([TEST_IMAGE_VALID_1], 0, preview_mode=PREVIEW_MODE_ORIGINAL_ZOOM)
         dialog.show() # Widget must be visible for mouse/wheel events

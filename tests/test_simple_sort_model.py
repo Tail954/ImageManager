@@ -54,6 +54,8 @@ class SimpleSortProxyModel(QSortFilterProxyModel):
 
 # テスト用のシンプルなアプリケーション
 class TestApp(QWidget):
+    __test__ = False
+
     def __init__(self):
         super().__init__()
         self.initUI()

@@ -14,7 +14,7 @@ from PyQt6.QtGui import QPainter, QColor, QPaintEvent # Added QPaintEvent for pa
 # Assuming src is in PYTHONPATH or tests are run from project root
 from src.settings_dialog import ThumbnailSizePreviewWidget, SettingsDialog, PREVIEW_MODE_FIT, PREVIEW_MODE_ORIGINAL_ZOOM
 # FIX: Import WC_FORMAT_HASH_COMMENT and other constants
-from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, WC_FORMAT_HASH_COMMENT, DELETE_EMPTY_FOLDERS_ENABLED, INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED
+from src.constants import THUMBNAIL_RIGHT_CLICK_ACTION, RIGHT_CLICK_ACTION_METADATA, RIGHT_CLICK_ACTION_MENU, WC_FORMAT_HASH_COMMENT, DELETE_EMPTY_FOLDERS_ENABLED, INITIAL_SORT_ORDER_ON_FOLDER_SELECT, SORT_BY_LOAD_ORDER_ALWAYS, SORT_BY_LAST_SELECTED, DOUBLE_CLICK_ACTION_VIEWER
 
 
 # Fixture to create a QApplication instance for tests that need it
@@ -92,13 +92,10 @@ class TestSettingsDialog:
     DEFAULT_RIGHT_CLICK_ACTION = RIGHT_CLICK_ACTION_METADATA # Default for tests
     DEFAULT_DELETE_EMPTY_FOLDERS = True # ★★★ 追加: デフォルト値を定義 ★★★
     DEFAULT_INITIAL_FOLDER_SORT = SORT_BY_LAST_SELECTED # ★★★ 追加: デフォルト値を定義 ★★★
+    DEFAULT_DOUBLE_CLICK_ACTION = DOUBLE_CLICK_ACTION_VIEWER
 
     @pytest.fixture
-    def dialog(self, qt_app, mocker):
-        # FIX: Mock _load_settings_for_dialog_display instead of _load_preview_mode_setting
-        mocker.patch.object(SettingsDialog, '_load_settings_for_dialog_display', 
-                            return_value={"image_preview_mode": self.DEFAULT_PREVIEW_MODE})
-        
+    def dialog(self, qt_app):
         dialog_instance = SettingsDialog(
             current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
             available_thumbnail_sizes=self.AVAILABLE_SIZES,
@@ -107,7 +104,8 @@ class TestSettingsDialog:
             # FIX: Add current_wc_comment_format argument
             current_wc_comment_format=WC_FORMAT_HASH_COMMENT, # Use a default value from constants
             current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
-            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
+            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT, # ★★★ 追加 ★★★
+            current_double_click_action=self.DEFAULT_DOUBLE_CLICK_ACTION
         )
         return dialog_instance
 
@@ -120,6 +118,7 @@ class TestSettingsDialog:
         # FIX: Add assertion for initial_wc_comment_format
         assert dialog.initial_folder_sort_setting == self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
         assert dialog.initial_delete_empty_folders_setting == self.DEFAULT_DELETE_EMPTY_FOLDERS # ★★★ 追加 ★★★
+        assert dialog.initial_double_click_action == self.DEFAULT_DOUBLE_CLICK_ACTION
         assert dialog.initial_wc_comment_format == WC_FORMAT_HASH_COMMENT # Check if the passed value is stored
 
         # Check slider initialization
@@ -297,17 +296,26 @@ class TestSettingsDialog:
     #     dialog._save_dialog_specific_settings()
     #     assert dialog.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
 
-    # Test _load_settings_for_dialog_display with file operations (requires more setup or finer mocking)
-    def test_load_settings_for_dialog_display_file_exists(self, qt_app, tmp_path, mocker):
-        # This test will not use the dialog fixture to avoid its _load_settings_for_dialog_display mock
+    # The dialog displays the validated value passed by MainWindow and does not read JSON itself.
+    def test_dialog_uses_passed_preview_mode_even_if_cwd_settings_differs(self, qt_app, tmp_path):
         settings_file = tmp_path / "app_settings.json"
-        
-        # Case 1: File exists with the setting
-        with open(settings_file, 'w') as f:
-            json.dump({"image_preview_mode": PREVIEW_MODE_ORIGINAL_ZOOM, "other_value": "test"}, f)
-        
-        mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(settings_file))
-        # FIX: Add current_wc_comment_format argument
+        settings_file.write_text(json.dumps({"image_preview_mode": PREVIEW_MODE_FIT}), encoding="utf-8")
+        dialog_instance = SettingsDialog(
+            current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
+            available_thumbnail_sizes=self.AVAILABLE_SIZES,
+            current_preview_mode=PREVIEW_MODE_ORIGINAL_ZOOM,
+            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
+            current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
+            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
+            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT,
+            current_double_click_action=self.DEFAULT_DOUBLE_CLICK_ACTION
+        )
+        assert dialog_instance.initial_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM
+        assert dialog_instance.original_zoom_mode_radio.isChecked()
+
+
+    def test_dialog_uses_passed_fit_mode_without_settings_file(self, qt_app, tmp_path):
+        assert not (tmp_path / "app_settings.json").exists()
         dialog_instance = SettingsDialog(
             current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
             available_thumbnail_sizes=self.AVAILABLE_SIZES,
@@ -315,41 +323,7 @@ class TestSettingsDialog:
             current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
             current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
             current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
-            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
+            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT,
+            current_double_click_action=self.DEFAULT_DOUBLE_CLICK_ACTION
         )
-        assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_ORIGINAL_ZOOM
-        assert dialog_instance.initial_preview_mode == PREVIEW_MODE_ORIGINAL_ZOOM # Check if initial_preview_mode is also set
-
-        # Case 2: File exists but setting is missing (should default)
-        with open(settings_file, 'w') as f:
-            json.dump({"other_value": "test"}, f)
-        # FIX: Add current_wc_comment_format argument
-        dialog_instance_2 = SettingsDialog(
-            current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
-            available_thumbnail_sizes=self.AVAILABLE_SIZES,
-            current_preview_mode=self.DEFAULT_PREVIEW_MODE,
-            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
-            current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
-            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
-            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
-        )
-        assert dialog_instance_2.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
-        assert dialog_instance_2.initial_preview_mode == PREVIEW_MODE_FIT
-
-
-    def test_load_settings_for_dialog_display_file_not_exists(self, qt_app, tmp_path, mocker):
-        non_existent_file = tmp_path / "non_existent_settings.json"
-        mocker.patch('src.settings_dialog.APP_SETTINGS_FILE', str(non_existent_file))
-        
-        # FIX: Add current_wc_comment_format argument
-        dialog_instance = SettingsDialog(
-            current_thumbnail_size=self.DEFAULT_THUMBNAIL_SIZE,
-            available_thumbnail_sizes=self.AVAILABLE_SIZES,
-            current_preview_mode=self.DEFAULT_PREVIEW_MODE,
-            current_right_click_action=self.DEFAULT_RIGHT_CLICK_ACTION,
-            current_wc_comment_format=WC_FORMAT_HASH_COMMENT,
-            current_delete_empty_folders_setting=self.DEFAULT_DELETE_EMPTY_FOLDERS, # ★★★ 追加 ★★★
-            current_initial_folder_sort_setting=self.DEFAULT_INITIAL_FOLDER_SORT # ★★★ 追加 ★★★
-        )
-        assert dialog_instance.current_settings["image_preview_mode"] == PREVIEW_MODE_FIT
         assert dialog_instance.initial_preview_mode == PREVIEW_MODE_FIT

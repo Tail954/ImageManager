@@ -70,6 +70,21 @@ class MetadataFilterProxyModel(QSortFilterProxyModel):
         else:
             logger.warning(f"Invalid search mode: {mode}. Keeping {self._search_mode}.")
 
+    def set_filters(self, positive, negative, generation, search_mode):
+        """Apply the complete filter state with a single proxy invalidation."""
+        if search_mode not in ("AND", "OR"):
+            raise ValueError("search_mode must be AND or OR")
+        self._search_mode = search_mode
+        for attr, cache_attr, text in (
+            ("_positive_prompt_filter", "_positive_keywords_cache", positive),
+            ("_negative_prompt_filter", "_negative_keywords_cache", negative),
+            ("_generation_info_filter", "_generation_keywords_cache", generation),
+        ):
+            normalized = str(text or "").lower()
+            setattr(self, attr, normalized)
+            setattr(self, cache_attr, [word.strip() for word in normalized.split(",") if word.strip()])
+        self.invalidateFilter()
+
     def set_hidden_paths(self, paths):
         """Sets the set of file paths that should be hidden by the filter."""
         # Ensure we are working with a set for efficient lookups

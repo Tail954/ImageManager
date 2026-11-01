@@ -52,81 +52,21 @@ class TestUIManager(unittest.TestCase):
 
     @patch('src.ui_manager.logger')
     def test_apply_filters_preserving_selection_move_mode_some_selected_remain(self, mock_logger):
-        # Arrange
-        self.mock_main_window.is_copy_mode = False
-
-        item1 = self._add_item_to_source_model("item1_visible_selected", "path1", {"positive_prompt": "apple"})
-        item2 = self._add_item_to_source_model("item2_hidden_selected", "path2", {"positive_prompt": "banana"})
-        item3 = self._add_item_to_source_model("item3_visible_unselected", "path3", {"positive_prompt": "apple pie"})
-        item4 = self._add_item_to_source_model("item4_visible_selected_also", "path4", {"positive_prompt": "apple green"})
-
-        proxy_idx1 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item1))
-        proxy_idx2 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item2))
-        proxy_idx4 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item4))
-        
-        self.mock_selection_model.selectedIndexes.return_value = [proxy_idx1, proxy_idx2, proxy_idx4]
-
-        # Act
-        positive_filter_text = "apple"
-        self.ui_manager.apply_filters_preserving_selection(positive_filter_text, "", "", "AND")
-
-        # Assert
-        self.assertEqual(self.ui_manager.filter_proxy_model._positive_prompt_filter, positive_filter_text.lower())
-        self.assertEqual(self.ui_manager.filter_proxy_model.rowCount(), 3) 
-
-        self.mock_selection_model.select.assert_called_once()
-        args, _ = self.mock_selection_model.select.call_args
-        
-        new_selection_qitemselection = args[0]
-        selection_flags = args[1]
-        
-        self.assertEqual(selection_flags, QItemSelectionModel.SelectionFlag.ClearAndSelect)
-
-        final_proxy_idx1 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item1))
-        final_proxy_idx4 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item4))
-        
-        selected_indexes_in_call = set(new_selection_qitemselection.indexes())
-        expected_selected_indexes = {final_proxy_idx1, final_proxy_idx4}
-        self.assertEqual(selected_indexes_in_call, expected_selected_indexes)
+        selection = MagicMock()
+        self.ui_manager.bind_controllers(MagicMock(), selection)
+        self.ui_manager.apply_filters_preserving_selection("apple", "", "", "AND")
+        selection.apply_filters.assert_called_once_with(
+            "apple", "", "", "AND", preserve_selection=True
+        )
 
     @patch('src.ui_manager.logger')
     def test_apply_filters_preserving_selection_copy_mode(self, mock_logger):
-        # Arrange
-        self.mock_main_window.is_copy_mode = True
-
-        item1 = self._add_item_to_source_model("item1_copy_selected", "cpath1", {"positive_prompt": "cat"})
-        item2 = self._add_item_to_source_model("item2_copy_hidden", "cpath2", {"positive_prompt": "dog"}) # Will be filtered out
-        item3 = self._add_item_to_source_model("item3_copy_selected_remains", "cpath3", {"positive_prompt": "cat cute"})
-
-        self.mock_main_window.copy_selection_order = [item1, item3]
-        item1.setData(1, SELECTION_ORDER_ROLE)
-        item3.setData(2, SELECTION_ORDER_ROLE)
-        
-        proxy_idx1 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item1))
-        proxy_idx3 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item3))
-        self.mock_selection_model.selectedIndexes.return_value = [proxy_idx1, proxy_idx3]
-
-        # Act
-        positive_filter_text = "cat"
-        self.ui_manager.apply_filters_preserving_selection(positive_filter_text, "", "", "AND")
-
-        # Assert
-        self.assertEqual(self.ui_manager.filter_proxy_model.rowCount(), 2)
-
-        self.mock_selection_model.select.assert_called_once()
-        args, _ = self.mock_selection_model.select.call_args
-        new_selection_qitemselection = args[0]
-        selection_flags = args[1]
-        self.assertEqual(selection_flags, QItemSelectionModel.SelectionFlag.ClearAndSelect)
-
-        final_proxy_idx1 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item1))
-        final_proxy_idx3 = self.ui_manager.filter_proxy_model.mapFromSource(self.ui_manager.source_thumbnail_model.indexFromItem(item3))
-        
-        selected_indexes_in_call = set(new_selection_qitemselection.indexes())
-        expected_selected_indexes = {final_proxy_idx1, final_proxy_idx3}
-        self.assertEqual(selected_indexes_in_call, expected_selected_indexes)
-
-        mock_logger.debug.assert_any_call("  Copy Mode: previously_selected_paths (from copy_selection_order, count: 2): ['cpath1', 'cpath3']")
+        selection = MagicMock()
+        self.ui_manager.bind_controllers(MagicMock(), selection)
+        self.ui_manager.apply_filters_preserving_selection("cat", "", "", "AND")
+        selection.apply_filters.assert_called_once_with(
+            "cat", "", "", "AND", preserve_selection=True
+        )
 
     @patch('src.ui_manager.logger')
     def test_filter_input_enter_preserves_selection(self, mock_logger):

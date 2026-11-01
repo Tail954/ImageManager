@@ -26,6 +26,15 @@ Thumbs.db
 
 # Test data
 /tests/test_data/images/
+/tests/test_data/*.png
+/tests/test_data/*.jpg
+/tests/test_data/*.jpeg
+/tests/test_data/*.webp
+
+# Local test and measurement artifacts
+.pytest_cache/
+/.qa_*/
+/measurement-*/
 
 
 # Log files

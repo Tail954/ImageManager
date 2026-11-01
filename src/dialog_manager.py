@@ -2,7 +2,7 @@
 import logging
 import os
 from PyQt6.QtCore import Qt, QByteArray
-from PyQt6.QtWidgets import QMessageBox, QApplication, QDialog
+from PyQt6.QtWidgets import QMessageBox, QDialog
 
 from .settings_dialog import SettingsDialog
 from .full_image_dialog import FullImageDialog
@@ -10,28 +10,33 @@ from .image_metadata_dialog import ImageMetadataDialog
 from .image_with_metadata_dialog import ImageWithMetadataDialog # ★★★ 追加 ★★★
 from .wc_creator_dialog import WCCreatorDialog
 from .drop_window import DropWindow
+from .tag_palette_window import TagPaletteWindow # ★★★ 追加 ★★★
 from .constants import (
-    APP_SETTINGS_FILE,
     THUMBNAIL_RIGHT_CLICK_ACTION,
-    DOUBLE_CLICK_ACTION, DOUBLE_CLICK_ACTION_VIEWER, DOUBLE_CLICK_ACTION_VIEWER_METADATA, # ★★★ 追加 ★★★
+    DOUBLE_CLICK_ACTION, DOUBLE_CLICK_ACTION_VIEWER_METADATA,
     WC_COMMENT_OUTPUT_FORMAT, METADATA_ROLE, DELETE_EMPTY_FOLDERS_ENABLED,
-    INITIAL_SORT_ORDER_ON_FOLDER_SELECT, # ★★★ 初期ソート設定キーを追加 ★★★
-    Qt as ConstantsQt # Renamed Qt from constants to avoid clash
+    INITIAL_SORT_ORDER_ON_FOLDER_SELECT,
 )
-# Qt from QtCore is used for Qt.ItemDataRole etc.
-# ConstantsQt might be used if constants.py defines its own Qt related values, but likely not needed here.
 
 logger = logging.getLogger(__name__)
 
 class DialogManager:
-    def __init__(self, main_window):
+    def __init__(self, main_window, settings_store=None):
         self.main_window = main_window
+        self.settings_store = settings_store
+        self.thumbnails = None
+        self.selection = None
         self.settings_dialog_instance = None
         self.full_image_dialog_instance = None
         self.metadata_dialog_instance = None
         self.drop_window_instance = None
         self.image_with_metadata_dialog_instance = None # ★★★ 追加 ★★★
         self.wc_creator_dialog_instance = None # モーダルなので毎回生成・破棄
+        self.tag_palette_window_instance = None # ★★★ 追加 ★★★
+
+    def bind_controllers(self, thumbnails, selection):
+        self.thumbnails = thumbnails
+        self.selection = selection
 
     def open_settings_dialog(self):
         """設定ダイアログを開き、変更を適用する。"""
@@ -82,11 +87,9 @@ class DialogManager:
                 logger.info(f"ダブルクリック動作設定が変更されました: {self.main_window.double_click_action}")
 
             new_size = self.settings_dialog_instance.get_selected_thumbnail_size()
-            reply_ok_for_size_change = True # Assume OK if no confirmation needed or confirmed
             if self.main_window.current_thumbnail_size != new_size:
                 if self.main_window.is_loading_thumbnails:
                     QMessageBox.warning(self.main_window, "注意", "サムネイル読み込み中です。完了後に再度お試しください。")
-                    reply_ok_for_size_change = False
                 else:
                     reply = QMessageBox.question(self.main_window, "サムネイルサイズ変更の確認",
                                                  f"サムネイルサイズを {new_size}px に変更しますか？\n表示中の全サムネイルが再生成されます。\n画像の枚数によっては時間がかかる場合があります。",
@@ -95,26 +98,17 @@ class DialogManager:
                     if reply == QMessageBox.StandardButton.Ok:
                         if self.main_window.apply_thumbnail_size_change(new_size):
                             logger.info(f"サムネイルサイズが {new_size}px に変更されました。")
-                            # MainWindowのcurrent_thumbnail_sizeはこの時点で更新されているはず
-                        else: # apply_thumbnail_size_change が False を返した場合 (例: 読み込み中だったなど)
-                            reply_ok_for_size_change = False
-                    else: # User cancelled
-                        reply_ok_for_size_change = False
             
-            # 設定をファイルに保存
-            self.main_window.app_settings["image_preview_mode"] = self.main_window.image_preview_mode
-            # サムネイルサイズは、実際に適用された(または適用しようとした)新しいサイズを保存
-            if self.main_window.current_thumbnail_size != new_size and reply_ok_for_size_change:
-                 self.main_window.app_settings["thumbnail_size"] = new_size
-            else: # サイズ変更なし、またはキャンセル/失敗した場合は現在の値を保存
-                 self.main_window.app_settings["thumbnail_size"] = self.main_window.current_thumbnail_size
-
-            self.main_window.app_settings[THUMBNAIL_RIGHT_CLICK_ACTION] = self.main_window.thumbnail_right_click_action
-            self.main_window.app_settings[WC_COMMENT_OUTPUT_FORMAT] = self.main_window.wc_creator_comment_format
-            self.main_window.app_settings[DELETE_EMPTY_FOLDERS_ENABLED] = self.main_window.delete_empty_folders_enabled # ★★★ 追加 ★★★
-            self.main_window.app_settings[INITIAL_SORT_ORDER_ON_FOLDER_SELECT] = self.main_window.initial_folder_sort_setting # ★★★ 追加 ★★★
-            self.main_window.app_settings[DOUBLE_CLICK_ACTION] = self.main_window.double_click_action # ★★★ 追加 ★★★
-            self.main_window._write_app_settings_file()
+            # Save only settings that were actually applied, including a rejected resize.
+            self.settings_store.save({
+                "image_preview_mode": self.main_window.image_preview_mode,
+                "thumbnail_size": self.main_window.current_thumbnail_size,
+                THUMBNAIL_RIGHT_CLICK_ACTION: self.main_window.thumbnail_right_click_action,
+                WC_COMMENT_OUTPUT_FORMAT: self.main_window.wc_creator_comment_format,
+                DELETE_EMPTY_FOLDERS_ENABLED: self.main_window.delete_empty_folders_enabled,
+                INITIAL_SORT_ORDER_ON_FOLDER_SELECT: self.main_window.initial_folder_sort_setting,
+                DOUBLE_CLICK_ACTION: self.main_window.double_click_action,
+            })
         self.settings_dialog_instance = None
 
 
@@ -151,7 +145,10 @@ class DialogManager:
                     logger.debug(f"ImageWithMetadataDialogの新規インスタンスを作成します。")
                     self.image_with_metadata_dialog_instance = ImageWithMetadataDialog(
                         visible_image_paths, current_idx_in_visible_list, self.main_window,
-                        preview_mode=self.main_window.image_preview_mode, parent=self.main_window
+                        preview_mode=self.main_window.image_preview_mode, parent=self.main_window,
+                        metadata_for=self.thumbnails.metadata_for,
+                        cache_metadata=self.thumbnails.cache_metadata,
+                        is_selected_callback=self.selection.is_selected,
                     )
                     self.image_with_metadata_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
                     self.image_with_metadata_dialog_instance.finished.connect(self._on_image_with_metadata_dialog_finished)
@@ -166,7 +163,7 @@ class DialogManager:
                     self.full_image_dialog_instance = FullImageDialog(
                         visible_image_paths, current_idx_in_visible_list,
                         preview_mode=self.main_window.image_preview_mode, parent=self.main_window,
-                        is_selected_callback=self.main_window.is_image_selected
+                        is_selected_callback=self.selection.is_selected
                     )
                     self.full_image_dialog_instance.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
                     self.full_image_dialog_instance.finished.connect(self._on_full_image_dialog_finished)
@@ -217,7 +214,7 @@ class DialogManager:
         if isinstance(data_from_item, dict):
             final_metadata_to_show = data_from_item
         else:
-            cached_metadata = self.main_window.metadata_cache.get(file_path)
+            cached_metadata = self.thumbnails.metadata_for(file_path)
             if isinstance(cached_metadata, dict):
                 final_metadata_to_show = cached_metadata
             else:
@@ -282,13 +279,13 @@ class DialogManager:
             QMessageBox.warning(self.main_window, "エラー", f"指定されたパスはファイルではありません:\n{file_path}")
             return
 
-        metadata_to_show = self.main_window.metadata_cache.get(file_path)
+        metadata_to_show = self.thumbnails.metadata_for(file_path)
 
         if metadata_to_show is None:
             logger.info(f"メタデータキャッシュにないため、 '{file_path}' から抽出します。")
             from .metadata_utils import extract_image_metadata
             metadata_to_show = extract_image_metadata(file_path)
-            self.main_window.metadata_cache[file_path] = metadata_to_show
+            self.thumbnails.cache_metadata(file_path, metadata_to_show)
             logger.debug(f"ファイル '{file_path}' からメタデータを抽出し、キャッシュしました。")
         else:
             logger.debug(f"ファイル '{file_path}' のメタデータをキャッシュから使用します。")
@@ -302,38 +299,26 @@ class DialogManager:
     def open_wc_creator_dialog(self):
         """ワイルドカード作成ダイアログを開く。"""
         logger.info("ワイルドカード作成ツールを起動します。")
-        # thumbnail_view は UIManager が持つ
-        selected_proxy_indexes = self.main_window.ui_manager.thumbnail_view.selectionModel().selectedIndexes()
-        if not selected_proxy_indexes:
+        selected_paths = self.selection.selected_paths()
+        if not selected_paths:
             QMessageBox.information(self.main_window, "情報", "作成対象の画像をサムネイル一覧から選択してください。")
             return
 
         selected_files_for_wc = []
         metadata_for_wc = []
-        processed_paths = set() # 選択されたアイテムの重複処理を避ける
-        
-        for proxy_idx in selected_proxy_indexes:
-            if proxy_idx.column() == 0:
-                source_idx = self.main_window.ui_manager.filter_proxy_model.mapToSource(proxy_idx) # ★★★ UIManager経由 ★★★
-                item = self.main_window.ui_manager.source_thumbnail_model.itemFromIndex(source_idx) # ★★★ UIManager経由 ★★★
-                if item:
-                    file_path = item.data(Qt.ItemDataRole.UserRole)
-                    if file_path and file_path not in processed_paths:
-                        metadata = item.data(METADATA_ROLE)
-                        if not isinstance(metadata, dict):
-                            metadata = self.main_window.metadata_cache.get(file_path)
-                        if not isinstance(metadata, dict):
-                            logger.warning(f"WC Creator用メタデータ: {file_path} のキャッシュが見つからないため、再抽出します。")
-                            from .metadata_utils import extract_image_metadata
-                            metadata = extract_image_metadata(file_path)
-                            self.main_window.metadata_cache[file_path] = metadata
-                        
-                        if isinstance(metadata, dict):
-                            selected_files_for_wc.append(file_path)
-                            metadata_for_wc.append(metadata)
-                            processed_paths.add(file_path)
-                        else:
-                            logger.error(f"WC Creator: {file_path} のメタデータ取得に失敗しました。スキップします。")
+        for file_path in selected_paths:
+            metadata = self.thumbnails.metadata_for(file_path)
+            if not isinstance(metadata, dict):
+                logger.warning("WC Creator用メタデータが未キャッシュ: %s", file_path)
+                from .metadata_utils import extract_image_metadata
+                metadata = extract_image_metadata(file_path)
+                if isinstance(metadata, dict):
+                    self.thumbnails.cache_metadata(file_path, metadata)
+            if isinstance(metadata, dict):
+                selected_files_for_wc.append(file_path)
+                metadata_for_wc.append(metadata)
+            else:
+                logger.error("WC Creatorのメタデータ取得に失敗: %s", file_path)
 
         if not selected_files_for_wc:
             QMessageBox.warning(self.main_window, "エラー", "有効な画像データが見つかりませんでした。")
@@ -343,3 +328,19 @@ class DialogManager:
         wc_dialog = WCCreatorDialog(selected_files_for_wc, metadata_for_wc, self.main_window.wc_creator_comment_format, self.main_window)
         wc_dialog.exec()
         logger.info("プロンプト整形ツールを閉じました。")
+
+    def toggle_tag_palette(self):
+        """タグパレットの表示/非表示を切り替える。"""
+        if self.tag_palette_window_instance is None:
+            logger.info("TagPaletteWindowのインスタンスを初めて作成します。")
+            self.tag_palette_window_instance = TagPaletteWindow(
+                self.main_window, settings_store=self.settings_store)
+
+        if self.tag_palette_window_instance.isVisible():
+            logger.debug("TagPaletteWindowを非表示にします。")
+            self.tag_palette_window_instance.hide()
+        else:
+            logger.debug("TagPaletteWindowを表示します。")
+            self.tag_palette_window_instance.show()
+            self.tag_palette_window_instance.raise_()
+            self.tag_palette_window_instance.activateWindow()
